@@ -1,0 +1,21 @@
+body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: #75AADB; color: #222 }
+.container { max-width: 900px; margin: 24px auto; padding: 28px; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.06) }
+.login-container { max-width: 360px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: #183b56; }
+.brand-mark { width: 42px; height: 42px; }
+.brand-name { font-size: 1.55rem; font-weight: 800; letter-spacing: -0.04em; }
+.brand-name span { color: #1d8a99; }
+.login-container .brand { margin-bottom: 24px; }
+.login-subtitle { margin: -12px 0 22px; color: #607080; font-size: 0.95rem; }
+.app-header { display: flex; align-items: center; gap: 22px; margin-bottom: 24px; padding-bottom: 18px; border-bottom: 1px solid #e6edf2; }
+.app-header .brand { align-self: flex-start; }
+.app-header h1 { margin: 0; font-size: 1.55rem; }
+.app-kicker { margin: 4px 0 0; color: #607080; font-size: 0.9rem; }
+.login-form { display: flex; flex-direction: column; gap: 8px; }
+.login-form input { padding: 8px; border: 1px solid #cfd3dc; border-radius: 4px; font: inherit; }
+.login-form button { margin-top: 8px; padding: 9px; cursor: pointer; }
+.login-error { margin: 4px 0 0; color: #b42318; }
+.controls { margin-bottom: 12px }
+video { width: 100%; max-height: 480px; background: #000 }
+#codesList { list-style: none; padding-left: 0 }
+#codesList li { padding: 8px 6px; border-bottom: 1px solid #eee }
