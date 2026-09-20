@@ -1,3 +1,4 @@
+import jsQR from "jsqr";
 import { Scanner } from "../abstracts/Scanner.js";
 
 export class BrowserCameraScanner extends Scanner {
@@ -45,7 +46,6 @@ export class BrowserCameraScanner extends Scanner {
       this.ctx.drawImage(this.video, 0, 0, w, h);
       const imageData = this.ctx.getImageData(0, 0, w, h);
       try {
-        // jsQR is provided by CDN and declared in globals.d.ts
         const code = jsQR(imageData.data, imageData.width, imageData.height);
         if (code && code.data && this.onDetected) {
           this.onDetected(code.data);
