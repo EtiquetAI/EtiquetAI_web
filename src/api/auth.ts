@@ -15,6 +15,13 @@ export interface User {
   is_verified: boolean;
 }
 
+export interface RegisterRequest {
+  name: string;
+  email: string;
+  phone_number?: string;
+  password: string;
+}
+
 export class ApiHttpError extends Error {
   readonly status: number;
   readonly code?: string;
@@ -187,8 +194,18 @@ export async function login(email: string, password: string): Promise<TokenRespo
   return parseTokenResponse(response);
 }
 
-export async function register(name: string, email: string, password: string): Promise<User> {
-  const response = await postJson("/api/v1/auth/register", { name, email, password });
+export async function register(input: RegisterRequest): Promise<User> {
+  const body: Record<string, string> = {
+    name: input.name,
+    email: input.email,
+    password: input.password,
+  };
+
+  if (input.phone_number) {
+    body.phone_number = input.phone_number;
+  }
+
+  const response = await postJson("/api/v1/auth/register", body);
   return parseUser(response);
 }
 

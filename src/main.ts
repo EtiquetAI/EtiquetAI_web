@@ -11,13 +11,20 @@ import { App } from "./App.js";
 import { clearSession, getAccessToken, saveSession } from "./auth/session.js";
 import { restoreUserSession } from "./auth/restore.js";
 
+const AUTH_VIEW_LOGIN = "login" as const;
+const AUTH_VIEW_REGISTER = "register" as const;
+const AUTH_VIEW_AUTHENTICATED = "authenticated" as const;
+
+type AuthView = typeof AUTH_VIEW_LOGIN | typeof AUTH_VIEW_REGISTER;
+type ApplicationView = AuthView | typeof AUTH_VIEW_AUTHENTICATED;
+
 interface PageElements {
+  authPage: HTMLElement;
+  appPage: HTMLElement;
   authTitle: HTMLElement;
   authSubtitle: HTMLElement;
   loginForm: HTMLFormElement;
   registerForm: HTMLFormElement;
-  loginPage: HTMLElement;
-  appPage: HTMLElement;
   loginError: HTMLElement;
   loginStatus: HTMLElement;
   registerError: HTMLElement;
@@ -27,18 +34,33 @@ interface PageElements {
   showLoginButton: HTMLButtonElement;
   emailInput: HTMLInputElement;
   passwordInput: HTMLInputElement;
+  registerNameInput: HTMLInputElement;
+  registerEmailInput: HTMLInputElement;
+  registerPhoneInput: HTMLInputElement;
   registerPasswordInput: HTMLInputElement;
   registerPasswordConfirmationInput: HTMLInputElement;
+  authInputs: HTMLInputElement[];
+  passwordToggleButtons: HTMLButtonElement[];
   logoutButton: HTMLButtonElement;
   currentUser: HTMLElement;
 }
 
+interface ValidationError {
+  input: HTMLInputElement;
+  message: string;
+}
+
 let appInstance: App | null = null;
 let currentUser: User | null = null;
+let currentView: ApplicationView = AUTH_VIEW_LOGIN;
 
 window.addEventListener("DOMContentLoaded", () => {
   const elements = getPageElements();
+  bindPasswordVisibility(elements);
+  setAuthView(elements, AUTH_VIEW_LOGIN);
   setAuthControlsDisabled(elements, true);
+  elements.loginStatus.textContent = "Verificando tu sesión...";
+  elements.loginStatus.hidden = false;
 
   elements.loginForm.addEventListener("submit", (event) => {
     void handleLogin(event, elements);
@@ -49,11 +71,11 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   elements.showRegisterButton.addEventListener("click", () => {
-    showRegisterMode(elements);
+    showRegister(elements);
   });
 
   elements.showLoginButton.addEventListener("click", () => {
-    showLoginMode(elements);
+    showLogin(elements);
   });
 
   elements.logoutButton.addEventListener("click", () => {
@@ -64,13 +86,21 @@ window.addEventListener("DOMContentLoaded", () => {
 });
 
 function getPageElements(): PageElements {
+  const emailInput = document.getElementById("email") as HTMLInputElement;
+  const passwordInput = document.getElementById("password") as HTMLInputElement;
+  const registerNameInput = document.getElementById("registerName") as HTMLInputElement;
+  const registerEmailInput = document.getElementById("registerEmail") as HTMLInputElement;
+  const registerPhoneInput = document.getElementById("registerPhone") as HTMLInputElement;
+  const registerPasswordInput = document.getElementById("registerPassword") as HTMLInputElement;
+  const registerPasswordConfirmationInput = document.getElementById("registerPasswordConfirmation") as HTMLInputElement;
+
   return {
+    authPage: document.getElementById("authPage") as HTMLElement,
+    appPage: document.getElementById("appPage") as HTMLElement,
     authTitle: document.getElementById("authTitle") as HTMLElement,
     authSubtitle: document.getElementById("authSubtitle") as HTMLElement,
     loginForm: document.getElementById("loginForm") as HTMLFormElement,
     registerForm: document.getElementById("registerForm") as HTMLFormElement,
-    loginPage: document.getElementById("loginPage") as HTMLElement,
-    appPage: document.getElementById("appPage") as HTMLElement,
     loginError: document.getElementById("loginError") as HTMLElement,
     loginStatus: document.getElementById("loginStatus") as HTMLElement,
     registerError: document.getElementById("registerError") as HTMLElement,
@@ -78,10 +108,23 @@ function getPageElements(): PageElements {
     registerButton: document.getElementById("registerButton") as HTMLButtonElement,
     showRegisterButton: document.getElementById("showRegisterButton") as HTMLButtonElement,
     showLoginButton: document.getElementById("showLoginButton") as HTMLButtonElement,
-    emailInput: document.getElementById("email") as HTMLInputElement,
-    passwordInput: document.getElementById("password") as HTMLInputElement,
-    registerPasswordInput: document.getElementById("registerPassword") as HTMLInputElement,
-    registerPasswordConfirmationInput: document.getElementById("registerPasswordConfirmation") as HTMLInputElement,
+    emailInput,
+    passwordInput,
+    registerNameInput,
+    registerEmailInput,
+    registerPhoneInput,
+    registerPasswordInput,
+    registerPasswordConfirmationInput,
+    authInputs: [
+      emailInput,
+      passwordInput,
+      registerNameInput,
+      registerEmailInput,
+      registerPhoneInput,
+      registerPasswordInput,
+      registerPasswordConfirmationInput,
+    ],
+    passwordToggleButtons: Array.from(document.querySelectorAll<HTMLButtonElement>("[data-password-target]")),
     logoutButton: document.getElementById("logoutButton") as HTMLButtonElement,
     currentUser: document.getElementById("currentUser") as HTMLElement,
   };
@@ -95,8 +138,20 @@ async function handleLogin(event: SubmitEvent, elements: PageElements): Promise<
   const email = readFormValue(formData.get("email")).trim();
   const password = readFormValue(formData.get("password"));
 
-  setAuthControlsDisabled(elements, true);
+  clearInputValidation(elements.authInputs);
   hideLoginError(elements);
+  elements.loginStatus.hidden = true;
+
+  const validationError = validateLogin(email, password, elements);
+  if (validationError) {
+    showLoginError(elements, validationError.message);
+    validationError.input.setAttribute("aria-invalid", "true");
+    validationError.input.focus();
+    return;
+  }
+
+  setAuthControlsDisabled(elements, true);
+  setButtonLoading(elements.loginButton, true);
 
   try {
     const tokens = await authApi.login(email, password);
@@ -104,12 +159,15 @@ async function handleLogin(event: SubmitEvent, elements: PageElements): Promise<
 
     const user = await authApi.getCurrentUser(tokens.access_token);
     elements.loginForm.reset();
-    startApp(user, elements);
+    resetPasswordVisibility(elements);
+    showAuthenticatedApp(user, elements);
   } catch (error) {
     clearSession();
     elements.passwordInput.value = "";
-    showLogin(elements, getLoginErrorMessage(error));
+    resetPasswordVisibility(elements);
+    showLoginError(elements, getLoginErrorMessage(error));
   } finally {
+    setButtonLoading(elements.loginButton, false);
     setAuthControlsDisabled(elements, false);
   }
 }
@@ -121,32 +179,45 @@ async function handleRegister(event: SubmitEvent, elements: PageElements): Promi
   const formData = new FormData(elements.registerForm);
   const name = readFormValue(formData.get("name")).trim();
   const email = readFormValue(formData.get("email")).trim();
+  const phone = readFormValue(formData.get("phone_number")).trim();
   const password = readFormValue(formData.get("password"));
   const passwordConfirmation = readFormValue(formData.get("password_confirmation"));
 
-  setAuthControlsDisabled(elements, true);
+  clearInputValidation(elements.authInputs);
   hideRegisterError(elements);
 
-  try {
-    if (password !== passwordConfirmation) {
-      elements.registerPasswordInput.value = "";
-      elements.registerPasswordConfirmationInput.value = "";
-      showRegisterError(elements, "Las contraseñas no coinciden.");
-      return;
-    }
+  const validationError = validateRegister(name, email, phone, password, passwordConfirmation, elements);
+  if (validationError) {
+    showRegisterError(elements, validationError.message);
+    validationError.input.setAttribute("aria-invalid", "true");
+    validationError.input.focus();
+    return;
+  }
 
-    await authApi.register(name, email, password);
+  setAuthControlsDisabled(elements, true);
+  setButtonLoading(elements.registerButton, true);
+
+  try {
+    await authApi.register({
+      name,
+      email,
+      password,
+      ...(phone ? { phone_number: phone } : {}),
+    });
+
     elements.registerForm.reset();
-    elements.passwordInput.value = "";
+    resetPasswordVisibility(elements);
     showLogin(elements);
     elements.emailInput.value = email;
-    elements.loginStatus.textContent = "Cuenta creada. Ahora iniciá sesión.";
-    elements.loginStatus.hidden = false;
+    showLoginStatus(elements, "Cuenta creada correctamente. Ya podés iniciar sesión.");
+    elements.emailInput.focus();
   } catch (error) {
     elements.registerPasswordInput.value = "";
     elements.registerPasswordConfirmationInput.value = "";
+    resetPasswordVisibility(elements);
     showRegisterError(elements, getRegisterErrorMessage(error));
   } finally {
+    setButtonLoading(elements.registerButton, false);
     setAuthControlsDisabled(elements, false);
   }
 }
@@ -155,7 +226,7 @@ async function restoreSession(elements: PageElements): Promise<void> {
   try {
     const user = await restoreUserSession();
     if (user) {
-      startApp(user, elements);
+      showAuthenticatedApp(user, elements);
     } else {
       showLogin(elements);
     }
@@ -182,12 +253,13 @@ async function handleLogout(elements: PageElements): Promise<void> {
     showLogin(elements);
     elements.loginForm.reset();
     elements.registerForm.reset();
+    resetPasswordVisibility(elements);
     elements.logoutButton.disabled = false;
     setAuthControlsDisabled(elements, false);
   }
 }
 
-function startApp(user: User, elements: PageElements): void {
+function showAuthenticatedApp(user: User, elements: PageElements): void {
   if (appInstance === null) {
     const video = document.getElementById("video") as HTMLVideoElement;
     const overlay = document.getElementById("overlay") as HTMLCanvasElement;
@@ -198,49 +270,153 @@ function startApp(user: User, elements: PageElements): void {
   }
 
   currentUser = user;
+  currentView = AUTH_VIEW_AUTHENTICATED;
   elements.currentUser.textContent = `${user.name} — ${user.role}`;
-  elements.loginPage.hidden = true;
+  elements.authPage.hidden = true;
   elements.appPage.hidden = false;
 }
 
 function showLogin(elements: PageElements, message?: string): void {
   currentUser = null;
-  elements.loginPage.hidden = false;
+  elements.authPage.hidden = false;
   elements.appPage.hidden = true;
   elements.currentUser.textContent = "";
-  showLoginMode(elements);
+  setAuthView(elements, AUTH_VIEW_LOGIN);
 
   if (message) {
-    elements.loginError.textContent = message;
-    elements.loginError.hidden = false;
-  } else {
-    hideLoginError(elements);
+    showLoginError(elements, message);
+    elements.emailInput.focus();
   }
 }
 
-function showLoginMode(elements: PageElements): void {
-  elements.authTitle.textContent = "Iniciar sesión";
-  elements.authSubtitle.textContent = "Control inteligente para tus paquetes.";
-  elements.loginForm.hidden = false;
-  elements.registerForm.hidden = true;
-  hideLoginError(elements);
-  elements.loginStatus.hidden = true;
-  hideRegisterError(elements);
+function showRegister(elements: PageElements): void {
+  currentUser = null;
+  elements.authPage.hidden = false;
+  elements.appPage.hidden = true;
+  elements.currentUser.textContent = "";
+  setAuthView(elements, AUTH_VIEW_REGISTER);
+  elements.registerNameInput.focus();
 }
 
-function showRegisterMode(elements: PageElements): void {
-  elements.authTitle.textContent = "Crear cuenta";
-  elements.authSubtitle.textContent = "Registrate para comenzar a usar EtiquetAI.";
-  elements.loginForm.hidden = true;
-  elements.registerForm.hidden = false;
+function setAuthView(elements: PageElements, view: AuthView): void {
+  currentView = view;
+  const isLogin = view === AUTH_VIEW_LOGIN;
+  elements.authPage.dataset.authView = view;
+  elements.loginForm.hidden = !isLogin;
+  elements.registerForm.hidden = isLogin;
+  elements.authTitle.textContent = isLogin ? "Bienvenido de nuevo" : "Crear cuenta";
+  elements.authSubtitle.textContent = isLogin
+    ? "Ingresá a tu cuenta para continuar."
+    : "Empezá a gestionar tus etiquetas con EtiquetAI.";
   hideLoginError(elements);
-  elements.loginStatus.hidden = true;
   hideRegisterError(elements);
-  document.getElementById("registerName")?.focus();
+  elements.loginStatus.hidden = true;
+  clearInputValidation(elements.authInputs);
+}
+
+function bindPasswordVisibility(elements: PageElements): void {
+  for (const button of elements.passwordToggleButtons) {
+    button.addEventListener("click", () => {
+      const targetId = button.dataset.passwordTarget;
+      if (!targetId) return;
+
+      const input = document.getElementById(targetId) as HTMLInputElement | null;
+      if (!input) return;
+
+      const shouldShow = input.type === "password";
+      input.type = shouldShow ? "text" : "password";
+      button.classList.toggle("is-visible", shouldShow);
+      button.setAttribute("aria-pressed", String(shouldShow));
+      button.setAttribute("aria-label", shouldShow ? "Ocultar contraseña" : "Mostrar contraseña");
+    });
+  }
+}
+
+function resetPasswordVisibility(elements: PageElements): void {
+  for (const button of elements.passwordToggleButtons) {
+    const targetId = button.dataset.passwordTarget;
+    if (!targetId) continue;
+
+    const input = document.getElementById(targetId) as HTMLInputElement | null;
+    if (!input) continue;
+
+    input.type = "password";
+    button.classList.remove("is-visible");
+    button.setAttribute("aria-pressed", "false");
+    button.setAttribute("aria-label", "Mostrar contraseña");
+  }
+}
+
+function validateLogin(email: string, password: string, elements: PageElements): ValidationError | null {
+  if (!email) {
+    return { input: elements.emailInput, message: "Ingresá tu email." };
+  }
+
+  if (elements.emailInput.validity.typeMismatch) {
+    return { input: elements.emailInput, message: "Ingresá un email válido." };
+  }
+
+  if (!password) {
+    return { input: elements.passwordInput, message: "Ingresá tu contraseña." };
+  }
+
+  return null;
+}
+
+function validateRegister(
+  name: string,
+  email: string,
+  phone: string,
+  password: string,
+  passwordConfirmation: string,
+  elements: PageElements,
+): ValidationError | null {
+  if (!name) {
+    return { input: elements.registerNameInput, message: "Ingresá tu nombre." };
+  }
+
+  if (name.length < 2 || name.length > 100) {
+    return { input: elements.registerNameInput, message: "El nombre debe tener entre 2 y 100 caracteres." };
+  }
+
+  if (!email) {
+    return { input: elements.registerEmailInput, message: "Ingresá tu email." };
+  }
+
+  if (elements.registerEmailInput.validity.typeMismatch) {
+    return { input: elements.registerEmailInput, message: "Ingresá un email válido." };
+  }
+
+  if (phone && (!/^[0-9+()\s-]+$/.test(phone) || phone.length < 8 || phone.length > 20)) {
+    return { input: elements.registerPhoneInput, message: "Ingresá un teléfono válido o dejá el campo vacío." };
+  }
+
+  if (password.length < 8) {
+    return { input: elements.registerPasswordInput, message: "La contraseña debe tener al menos 8 caracteres." };
+  }
+
+  if (password !== passwordConfirmation) {
+    return { input: elements.registerPasswordConfirmationInput, message: "Las contraseñas no coinciden." };
+  }
+
+  return null;
+}
+
+function showLoginError(elements: PageElements, message: string): void {
+  elements.loginError.textContent = message;
+  elements.loginError.hidden = false;
+  elements.loginStatus.hidden = true;
 }
 
 function hideLoginError(elements: PageElements): void {
+  elements.loginError.textContent = "";
   elements.loginError.hidden = true;
+}
+
+function showLoginStatus(elements: PageElements, message: string): void {
+  elements.loginStatus.textContent = message;
+  elements.loginStatus.hidden = false;
+  hideLoginError(elements);
 }
 
 function showRegisterError(elements: PageElements, message: string): void {
@@ -249,14 +425,42 @@ function showRegisterError(elements: PageElements, message: string): void {
 }
 
 function hideRegisterError(elements: PageElements): void {
+  elements.registerError.textContent = "";
   elements.registerError.hidden = true;
 }
 
+function clearInputValidation(inputs: HTMLInputElement[]): void {
+  for (const input of inputs) {
+    input.removeAttribute("aria-invalid");
+  }
+}
+
 function setAuthControlsDisabled(elements: PageElements, disabled: boolean): void {
+  for (const input of elements.authInputs) {
+    input.disabled = disabled;
+  }
+
+  for (const button of elements.passwordToggleButtons) {
+    button.disabled = disabled;
+  }
+
   elements.loginButton.disabled = disabled;
   elements.registerButton.disabled = disabled;
   elements.showRegisterButton.disabled = disabled;
   elements.showLoginButton.disabled = disabled;
+}
+
+function setButtonLoading(button: HTMLButtonElement, loading: boolean): void {
+  const label = button.querySelector<HTMLElement>("[data-button-label]");
+  const defaultLabel = button.dataset.defaultLabel ?? label?.textContent ?? "";
+  const loadingLabel = button.dataset.loadingLabel ?? defaultLabel;
+
+  if (label) {
+    label.textContent = loading ? loadingLabel : defaultLabel;
+  }
+
+  button.classList.toggle("is-loading", loading);
+  button.setAttribute("aria-busy", String(loading));
 }
 
 function readFormValue(value: FormDataEntryValue | null): string {
@@ -268,7 +472,7 @@ function isUnauthorized(error: unknown): boolean {
 }
 
 function getLoginErrorMessage(error: unknown): string {
-  if (error instanceof ApiHttpError && error.status === 401) {
+  if (error instanceof ApiHttpError && (error.status === 401 || error.code === "invalid_credentials")) {
     return "Email o contraseña incorrectos.";
   }
 
@@ -284,11 +488,11 @@ function getLoginErrorMessage(error: unknown): string {
 }
 
 function getRegisterErrorMessage(error: unknown): string {
-  if (error instanceof ApiHttpError && error.status === 409) {
-    return "Ese email ya está registrado. Iniciá sesión o usá otro email.";
+  if (error instanceof ApiHttpError && (error.status === 409 || error.code === "email_already_registered")) {
+    return "Ya existe una cuenta con ese email.";
   }
 
-  if (error instanceof ApiHttpError && error.status === 400) {
+  if (error instanceof ApiHttpError && (error.status === 400 || error.code === "invalid_request")) {
     return "Revisá los datos ingresados.";
   }
 
@@ -297,10 +501,14 @@ function getRegisterErrorMessage(error: unknown): string {
   }
 
   if (error instanceof ApiConfigurationError) {
-    return "No se pudo crear la cuenta. Verificá la configuración del servidor.";
+    return "No pudimos crear la cuenta. Verificá la configuración del servidor.";
   }
 
-  return "No se pudo crear la cuenta. Intentá nuevamente.";
+  if (error instanceof ApiHttpError && error.status >= 500) {
+    return "No pudimos crear la cuenta. Intentá nuevamente.";
+  }
+
+  return "No pudimos crear la cuenta. Intentá nuevamente.";
 }
 
 function getRestoreErrorMessage(error: unknown): string {

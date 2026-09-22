@@ -23,7 +23,9 @@ Set the backend URL before starting the development server:
 VITE_API_BASE_URL=http://localhost:8080
 ```
 
-The same value can be stored in `.env.local`. The frontend sends registration requests to `POST /api/v1/auth/register`, login requests to `POST /api/v1/auth/login`, validates the session with `GET /api/v1/users/me`, and stores the access and refresh tokens in `sessionStorage` only.
+The same value can be stored in `.env.local`. The authentication screen starts at login and switches between login and registration without routing. The frontend sends registration requests to `POST /api/v1/auth/register` with `name`, `email`, `password`, and an optional `phone_number`, then returns to login with the registered email prefilled. Registration does not create a session because the backend returns a user but no tokens.
+
+Login uses `POST /api/v1/auth/login`, validates the session with `GET /api/v1/users/me`, and stores the access and refresh tokens in `sessionStorage` only. On reload, the frontend restores the JWT session and refreshes it through the backend when the access token has expired.
 
 ## Build
 
@@ -60,4 +62,4 @@ Use the following build settings:
 
 The root `vercel.json` contains the same build settings and rewrites extensionless, non-asset paths to `/index.html` for the single-page application. Requests under `/assets/` and requests ending in a file extension are excluded from the rewrite so JavaScript, CSS, and other generated assets are served normally.
 
-After registration, the frontend returns to the login form without storing the password. After login, it validates the returned bearer token against the current-user endpoint. On reload, it restores the session from `sessionStorage` and performs one bounded refresh attempt when the access token is unauthorized. Concurrent restore attempts share the same refresh request, refresh token rotation replaces both stored tokens, and a failed refresh clears the local session. Logout calls the backend and always clears the local session, including when the request cannot reach the server.
+After registration, the frontend returns to the login form without storing the password. After login, it validates the returned bearer token against the current-user endpoint. Concurrent restore attempts share the same refresh request, refresh token rotation replaces both stored tokens, and a failed refresh clears the local session. Logout calls the backend and always clears the local session, including when the request cannot reach the server.
