@@ -1,6 +1,6 @@
 # EtiquetAI Web
 
-EtiquetAI is a Vite and TypeScript frontend for scanning QR codes from a browser camera and keeping detected values in local storage. The optional API reporting adapter uses the browser `fetch` API to send detected codes to a URL entered by the user.
+EtiquetAI is a Vite and TypeScript frontend for scanning QR codes from a browser camera and keeping detected values in local storage. Authentication uses the EtiquetAI Go API with JWT bearer tokens. The optional API reporting adapter uses the browser `fetch` API to send detected codes to a URL entered by the user.
 
 ## Requirements
 
@@ -16,6 +16,14 @@ Install dependencies and start the Vite development server from the repository r
 npm install
 npm run dev
 ```
+
+Set the backend URL before starting the development server:
+
+```text
+VITE_API_BASE_URL=http://localhost:8080
+```
+
+The same value can be stored in `.env.local`. The frontend sends login requests to `POST /api/v1/auth/login`, validates the session with `GET /api/v1/users/me`, and stores the access and refresh tokens in `sessionStorage` only.
 
 ## Build
 
@@ -37,11 +45,19 @@ npm run preview
 
 ## Deploy on Vercel
 
-Deploy the repository root as a Vite project. Do not configure a custom **Root Directory**. Use the following build settings:
+Deploy the repository root as a Vite project. Do not configure a custom **Root Directory**. Set this Vercel environment variable:
+
+```text
+VITE_API_BASE_URL=https://etiquetai-go.onrender.com
+```
+
+The backend must also allow the deployed frontend origin through its `CORS_ALLOWED_ORIGINS` configuration. Use `https://etiquet-ai-web.vercel.app` in production and include `http://localhost:5173` for local development when needed.
+
+Use the following build settings:
 
 - **Build Command:** `npm run build`
 - **Output Directory:** `dist`
 
 The root `vercel.json` contains the same build settings and rewrites extensionless, non-asset paths to `/index.html` for the single-page application. Requests under `/assets/` and requests ending in a file extension are excluded from the rewrite so JavaScript, CSS, and other generated assets are served normally.
 
-The login uses temporary client-side demo credentials: `fiuba` / `1234`. This is not real authentication. No backend server is included; optional reporting remains a browser-side POST adapter and requires a compatible API endpoint supplied by the user.
+After login, the frontend validates the returned bearer token against the current-user endpoint. On reload, it restores the session from `sessionStorage` and performs one refresh attempt when the access token is unauthorized. Refresh token rotation replaces both stored tokens. Logout calls the backend and always clears the local session, including when the request cannot reach the server.

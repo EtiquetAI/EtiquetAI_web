@@ -64,6 +64,12 @@ export class App {
     this.refreshList();
   }
 
+  stop(): void {
+    this.scanner.stop();
+    this.startBtn.disabled = false;
+    this.stopBtn.disabled = true;
+  }
+
   async refreshList() {
     const codes = await this.storage.list();
     this.codesListEl.innerHTML = "";
