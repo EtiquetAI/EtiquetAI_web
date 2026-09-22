@@ -8,15 +8,27 @@ import {
 import { BrowserCameraScanner } from "./implementations/BrowserCameraScanner.js";
 import { LocalStorageQRCodeStorage } from "./implementations/LocalStorageQRCodeStorage.js";
 import { App } from "./App.js";
-import { clearSession, getAccessToken, getRefreshToken, saveSession } from "./auth/session.js";
+import { clearSession, getAccessToken, saveSession } from "./auth/session.js";
+import { restoreUserSession } from "./auth/restore.js";
 
 interface PageElements {
+  authTitle: HTMLElement;
+  authSubtitle: HTMLElement;
   loginForm: HTMLFormElement;
+  registerForm: HTMLFormElement;
   loginPage: HTMLElement;
   appPage: HTMLElement;
   loginError: HTMLElement;
+  loginStatus: HTMLElement;
+  registerError: HTMLElement;
   loginButton: HTMLButtonElement;
+  registerButton: HTMLButtonElement;
+  showRegisterButton: HTMLButtonElement;
+  showLoginButton: HTMLButtonElement;
+  emailInput: HTMLInputElement;
   passwordInput: HTMLInputElement;
+  registerPasswordInput: HTMLInputElement;
+  registerPasswordConfirmationInput: HTMLInputElement;
   logoutButton: HTMLButtonElement;
   currentUser: HTMLElement;
 }
@@ -26,10 +38,22 @@ let currentUser: User | null = null;
 
 window.addEventListener("DOMContentLoaded", () => {
   const elements = getPageElements();
-  elements.loginButton.disabled = true;
+  setAuthControlsDisabled(elements, true);
 
   elements.loginForm.addEventListener("submit", (event) => {
     void handleLogin(event, elements);
+  });
+
+  elements.registerForm.addEventListener("submit", (event) => {
+    void handleRegister(event, elements);
+  });
+
+  elements.showRegisterButton.addEventListener("click", () => {
+    showRegisterMode(elements);
+  });
+
+  elements.showLoginButton.addEventListener("click", () => {
+    showLoginMode(elements);
   });
 
   elements.logoutButton.addEventListener("click", () => {
@@ -41,12 +65,23 @@ window.addEventListener("DOMContentLoaded", () => {
 
 function getPageElements(): PageElements {
   return {
+    authTitle: document.getElementById("authTitle") as HTMLElement,
+    authSubtitle: document.getElementById("authSubtitle") as HTMLElement,
     loginForm: document.getElementById("loginForm") as HTMLFormElement,
+    registerForm: document.getElementById("registerForm") as HTMLFormElement,
     loginPage: document.getElementById("loginPage") as HTMLElement,
     appPage: document.getElementById("appPage") as HTMLElement,
     loginError: document.getElementById("loginError") as HTMLElement,
+    loginStatus: document.getElementById("loginStatus") as HTMLElement,
+    registerError: document.getElementById("registerError") as HTMLElement,
     loginButton: document.getElementById("loginButton") as HTMLButtonElement,
+    registerButton: document.getElementById("registerButton") as HTMLButtonElement,
+    showRegisterButton: document.getElementById("showRegisterButton") as HTMLButtonElement,
+    showLoginButton: document.getElementById("showLoginButton") as HTMLButtonElement,
+    emailInput: document.getElementById("email") as HTMLInputElement,
     passwordInput: document.getElementById("password") as HTMLInputElement,
+    registerPasswordInput: document.getElementById("registerPassword") as HTMLInputElement,
+    registerPasswordConfirmationInput: document.getElementById("registerPasswordConfirmation") as HTMLInputElement,
     logoutButton: document.getElementById("logoutButton") as HTMLButtonElement,
     currentUser: document.getElementById("currentUser") as HTMLElement,
   };
@@ -60,7 +95,7 @@ async function handleLogin(event: SubmitEvent, elements: PageElements): Promise<
   const email = readFormValue(formData.get("email")).trim();
   const password = readFormValue(formData.get("password"));
 
-  elements.loginButton.disabled = true;
+  setAuthControlsDisabled(elements, true);
   hideLoginError(elements);
 
   try {
@@ -75,44 +110,59 @@ async function handleLogin(event: SubmitEvent, elements: PageElements): Promise<
     elements.passwordInput.value = "";
     showLogin(elements, getLoginErrorMessage(error));
   } finally {
-    elements.loginButton.disabled = false;
+    setAuthControlsDisabled(elements, false);
+  }
+}
+
+async function handleRegister(event: SubmitEvent, elements: PageElements): Promise<void> {
+  event.preventDefault();
+  if (elements.registerButton.disabled) return;
+
+  const formData = new FormData(elements.registerForm);
+  const name = readFormValue(formData.get("name")).trim();
+  const email = readFormValue(formData.get("email")).trim();
+  const password = readFormValue(formData.get("password"));
+  const passwordConfirmation = readFormValue(formData.get("password_confirmation"));
+
+  setAuthControlsDisabled(elements, true);
+  hideRegisterError(elements);
+
+  try {
+    if (password !== passwordConfirmation) {
+      elements.registerPasswordInput.value = "";
+      elements.registerPasswordConfirmationInput.value = "";
+      showRegisterError(elements, "Las contraseñas no coinciden.");
+      return;
+    }
+
+    await authApi.register(name, email, password);
+    elements.registerForm.reset();
+    elements.passwordInput.value = "";
+    showLogin(elements);
+    elements.emailInput.value = email;
+    elements.loginStatus.textContent = "Cuenta creada. Ahora iniciá sesión.";
+    elements.loginStatus.hidden = false;
+  } catch (error) {
+    elements.registerPasswordInput.value = "";
+    elements.registerPasswordConfirmationInput.value = "";
+    showRegisterError(elements, getRegisterErrorMessage(error));
+  } finally {
+    setAuthControlsDisabled(elements, false);
   }
 }
 
 async function restoreSession(elements: PageElements): Promise<void> {
-  const accessToken = getAccessToken();
-  const refreshToken = getRefreshToken();
-
-  if (!accessToken || !refreshToken) {
-    clearSession();
-    showLogin(elements);
-    elements.loginButton.disabled = false;
-    return;
-  }
-
   try {
-    const user = await authApi.getCurrentUser(accessToken);
-    startApp(user, elements);
-    return;
-  } catch (error) {
-    if (!isUnauthorized(error)) {
-      showLogin(elements, getRestoreErrorMessage(error));
-      elements.loginButton.disabled = false;
-      return;
+    const user = await restoreUserSession();
+    if (user) {
+      startApp(user, elements);
+    } else {
+      showLogin(elements);
     }
-  }
-
-  try {
-    const tokens = await authApi.refresh(refreshToken);
-    saveSession(tokens);
-
-    const user = await authApi.getCurrentUser(tokens.access_token);
-    startApp(user, elements);
   } catch (error) {
-    clearSession();
     showLogin(elements, getRestoreErrorMessage(error));
   } finally {
-    elements.loginButton.disabled = false;
+    setAuthControlsDisabled(elements, false);
   }
 }
 
@@ -131,8 +181,9 @@ async function handleLogout(elements: PageElements): Promise<void> {
     appInstance?.stop();
     showLogin(elements);
     elements.loginForm.reset();
+    elements.registerForm.reset();
     elements.logoutButton.disabled = false;
-    elements.loginButton.disabled = false;
+    setAuthControlsDisabled(elements, false);
   }
 }
 
@@ -157,6 +208,7 @@ function showLogin(elements: PageElements, message?: string): void {
   elements.loginPage.hidden = false;
   elements.appPage.hidden = true;
   elements.currentUser.textContent = "";
+  showLoginMode(elements);
 
   if (message) {
     elements.loginError.textContent = message;
@@ -166,8 +218,45 @@ function showLogin(elements: PageElements, message?: string): void {
   }
 }
 
+function showLoginMode(elements: PageElements): void {
+  elements.authTitle.textContent = "Iniciar sesión";
+  elements.authSubtitle.textContent = "Control inteligente para tus paquetes.";
+  elements.loginForm.hidden = false;
+  elements.registerForm.hidden = true;
+  hideLoginError(elements);
+  elements.loginStatus.hidden = true;
+  hideRegisterError(elements);
+}
+
+function showRegisterMode(elements: PageElements): void {
+  elements.authTitle.textContent = "Crear cuenta";
+  elements.authSubtitle.textContent = "Registrate para comenzar a usar EtiquetAI.";
+  elements.loginForm.hidden = true;
+  elements.registerForm.hidden = false;
+  hideLoginError(elements);
+  elements.loginStatus.hidden = true;
+  hideRegisterError(elements);
+  document.getElementById("registerName")?.focus();
+}
+
 function hideLoginError(elements: PageElements): void {
   elements.loginError.hidden = true;
+}
+
+function showRegisterError(elements: PageElements, message: string): void {
+  elements.registerError.textContent = message;
+  elements.registerError.hidden = false;
+}
+
+function hideRegisterError(elements: PageElements): void {
+  elements.registerError.hidden = true;
+}
+
+function setAuthControlsDisabled(elements: PageElements, disabled: boolean): void {
+  elements.loginButton.disabled = disabled;
+  elements.registerButton.disabled = disabled;
+  elements.showRegisterButton.disabled = disabled;
+  elements.showLoginButton.disabled = disabled;
 }
 
 function readFormValue(value: FormDataEntryValue | null): string {
@@ -192,6 +281,26 @@ function getLoginErrorMessage(error: unknown): string {
   }
 
   return "No se pudo iniciar sesión. Intentá nuevamente.";
+}
+
+function getRegisterErrorMessage(error: unknown): string {
+  if (error instanceof ApiHttpError && error.status === 409) {
+    return "Ese email ya está registrado. Iniciá sesión o usá otro email.";
+  }
+
+  if (error instanceof ApiHttpError && error.status === 400) {
+    return "Revisá los datos ingresados.";
+  }
+
+  if (error instanceof ApiNetworkError) {
+    return "No se pudo conectar con el servidor. Intentá nuevamente en unos segundos.";
+  }
+
+  if (error instanceof ApiConfigurationError) {
+    return "No se pudo crear la cuenta. Verificá la configuración del servidor.";
+  }
+
+  return "No se pudo crear la cuenta. Intentá nuevamente.";
 }
 
 function getRestoreErrorMessage(error: unknown): string {
