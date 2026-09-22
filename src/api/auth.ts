@@ -187,6 +187,11 @@ export async function login(email: string, password: string): Promise<TokenRespo
   return parseTokenResponse(response);
 }
 
+export async function register(name: string, email: string, password: string): Promise<User> {
+  const response = await postJson("/api/v1/auth/register", { name, email, password });
+  return parseUser(response);
+}
+
 export async function refresh(refreshToken: string): Promise<TokenResponse> {
   const response = await postJson("/api/v1/auth/refresh", { refresh_token: refreshToken });
   return parseTokenResponse(response);
@@ -209,6 +214,7 @@ export async function logout(accessToken: string): Promise<void> {
 
 export const authApi = {
   login,
+  register,
   refresh,
   getCurrentUser,
   logout,

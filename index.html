@@ -17,8 +17,8 @@
         </svg>
         <span class="brand-name">Etiquet<span>AI</span></span>
       </div>
-      <h1>Iniciar sesión</h1>
-      <p class="login-subtitle">Control inteligente para tus paquetes.</p>
+      <h1 id="authTitle">Iniciar sesión</h1>
+      <p id="authSubtitle" class="login-subtitle">Control inteligente para tus paquetes.</p>
       <form id="loginForm" class="login-form">
         <label for="email">Email</label>
         <input id="email" name="email" type="email" autocomplete="email" required />
@@ -28,6 +28,26 @@
 
         <button id="loginButton" type="submit">Ingresar</button>
         <p id="loginError" class="login-error" role="alert" hidden>Email o contraseña incorrectos.</p>
+        <p id="loginStatus" class="login-status" role="status" hidden></p>
+        <p class="auth-switch">¿No tenés una cuenta? <button id="showRegisterButton" type="button">Crear cuenta</button></p>
+      </form>
+
+      <form id="registerForm" class="login-form" hidden>
+        <label for="registerName">Nombre</label>
+        <input id="registerName" name="name" type="text" autocomplete="name" minlength="2" maxlength="100" required />
+
+        <label for="registerEmail">Email</label>
+        <input id="registerEmail" name="email" type="email" autocomplete="email" required />
+
+        <label for="registerPassword">Contraseña</label>
+        <input id="registerPassword" name="password" type="password" autocomplete="new-password" minlength="8" required />
+
+        <label for="registerPasswordConfirmation">Repetir contraseña</label>
+        <input id="registerPasswordConfirmation" name="password_confirmation" type="password" autocomplete="new-password" minlength="8" required />
+
+        <button id="registerButton" type="submit">Crear cuenta</button>
+        <p id="registerError" class="login-error" role="alert" hidden></p>
+        <p class="auth-switch">¿Ya tenés una cuenta? <button id="showLoginButton" type="button">Iniciar sesión</button></p>
       </form>
     </main>
 
