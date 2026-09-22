@@ -11,16 +11,24 @@ import { App } from "./App.js";
 import { clearSession, getAccessToken, saveSession } from "./auth/session.js";
 import { restoreUserSession } from "./auth/restore.js";
 
+const AUTH_VIEW_LANDING = "landing" as const;
 const AUTH_VIEW_LOGIN = "login" as const;
 const AUTH_VIEW_REGISTER = "register" as const;
 const AUTH_VIEW_AUTHENTICATED = "authenticated" as const;
 
 type AuthView = typeof AUTH_VIEW_LOGIN | typeof AUTH_VIEW_REGISTER;
-type ApplicationView = AuthView | typeof AUTH_VIEW_AUTHENTICATED;
+type ApplicationView = AuthView | typeof AUTH_VIEW_LANDING | typeof AUTH_VIEW_AUTHENTICATED;
 
 interface PageElements {
+  sessionGate: HTMLElement;
+  landingPage: HTMLElement;
   authPage: HTMLElement;
   appPage: HTMLElement;
+  landingLoginButton: HTMLButtonElement;
+  landingRegisterButton: HTMLButtonElement;
+  heroRegisterButton: HTMLButtonElement;
+  landingCtaButton: HTMLButtonElement;
+  authBackButton: HTMLButtonElement;
   authTitle: HTMLElement;
   authSubtitle: HTMLElement;
   loginForm: HTMLFormElement;
@@ -39,6 +47,9 @@ interface PageElements {
   registerPhoneInput: HTMLInputElement;
   registerPasswordInput: HTMLInputElement;
   registerPasswordConfirmationInput: HTMLInputElement;
+  registerPasswordStrength: HTMLElement;
+  registerPasswordStrengthLabel: HTMLElement;
+  registerPasswordStrengthHint: HTMLElement;
   authInputs: HTMLInputElement[];
   passwordToggleButtons: HTMLButtonElement[];
   logoutButton: HTMLButtonElement;
@@ -52,15 +63,16 @@ interface ValidationError {
 
 let appInstance: App | null = null;
 let currentUser: User | null = null;
-let currentView: ApplicationView = AUTH_VIEW_LOGIN;
+let currentView: ApplicationView = AUTH_VIEW_LANDING;
 
 window.addEventListener("DOMContentLoaded", () => {
   const elements = getPageElements();
   bindPasswordVisibility(elements);
+  bindPasswordStrength(elements);
+  bindLandingNavigation(elements);
   setAuthView(elements, AUTH_VIEW_LOGIN);
   setAuthControlsDisabled(elements, true);
-  elements.loginStatus.textContent = "Verificando tu sesión...";
-  elements.loginStatus.hidden = false;
+  elements.loginStatus.hidden = true;
 
   elements.loginForm.addEventListener("submit", (event) => {
     void handleLogin(event, elements);
@@ -95,8 +107,15 @@ function getPageElements(): PageElements {
   const registerPasswordConfirmationInput = document.getElementById("registerPasswordConfirmation") as HTMLInputElement;
 
   return {
+    sessionGate: document.getElementById("sessionGate") as HTMLElement,
+    landingPage: document.getElementById("landingPage") as HTMLElement,
     authPage: document.getElementById("authPage") as HTMLElement,
     appPage: document.getElementById("appPage") as HTMLElement,
+    landingLoginButton: document.getElementById("landingLoginButton") as HTMLButtonElement,
+    landingRegisterButton: document.getElementById("landingRegisterButton") as HTMLButtonElement,
+    heroRegisterButton: document.getElementById("heroRegisterButton") as HTMLButtonElement,
+    landingCtaButton: document.getElementById("landingCtaButton") as HTMLButtonElement,
+    authBackButton: document.getElementById("authBackButton") as HTMLButtonElement,
     authTitle: document.getElementById("authTitle") as HTMLElement,
     authSubtitle: document.getElementById("authSubtitle") as HTMLElement,
     loginForm: document.getElementById("loginForm") as HTMLFormElement,
@@ -115,6 +134,9 @@ function getPageElements(): PageElements {
     registerPhoneInput,
     registerPasswordInput,
     registerPasswordConfirmationInput,
+    registerPasswordStrength: document.getElementById("registerPasswordStrength") as HTMLElement,
+    registerPasswordStrengthLabel: document.getElementById("registerPasswordStrengthLabel") as HTMLElement,
+    registerPasswordStrengthHint: document.getElementById("registerPasswordStrengthHint") as HTMLElement,
     authInputs: [
       emailInput,
       passwordInput,
@@ -128,6 +150,22 @@ function getPageElements(): PageElements {
     logoutButton: document.getElementById("logoutButton") as HTMLButtonElement,
     currentUser: document.getElementById("currentUser") as HTMLElement,
   };
+}
+
+function bindLandingNavigation(elements: PageElements): void {
+  elements.landingLoginButton.addEventListener("click", () => {
+    showLogin(elements);
+  });
+
+  for (const button of [elements.landingRegisterButton, elements.heroRegisterButton, elements.landingCtaButton]) {
+    button.addEventListener("click", () => {
+      showRegister(elements);
+    });
+  }
+
+  elements.authBackButton.addEventListener("click", () => {
+    showLanding(elements);
+  });
 }
 
 async function handleLogin(event: SubmitEvent, elements: PageElements): Promise<void> {
@@ -228,12 +266,14 @@ async function restoreSession(elements: PageElements): Promise<void> {
     if (user) {
       showAuthenticatedApp(user, elements);
     } else {
-      showLogin(elements);
+      showLanding(elements, false);
     }
-  } catch (error) {
-    showLogin(elements, getRestoreErrorMessage(error));
+  } catch {
+    showLanding(elements, false);
   } finally {
     setAuthControlsDisabled(elements, false);
+    elements.sessionGate.hidden = true;
+    document.body.dataset.sessionState = "ready";
   }
 }
 
@@ -250,7 +290,7 @@ async function handleLogout(elements: PageElements): Promise<void> {
   } finally {
     clearSession();
     appInstance?.stop();
-    showLogin(elements);
+    showLanding(elements);
     elements.loginForm.reset();
     elements.registerForm.reset();
     resetPasswordVisibility(elements);
@@ -270,32 +310,81 @@ function showAuthenticatedApp(user: User, elements: PageElements): void {
   }
 
   currentUser = user;
-  currentView = AUTH_VIEW_AUTHENTICATED;
   elements.currentUser.textContent = `${user.name} — ${user.role}`;
-  elements.authPage.hidden = true;
-  elements.appPage.hidden = false;
+  setPageView(elements, AUTH_VIEW_AUTHENTICATED);
+  window.requestAnimationFrame(() => {
+    document.getElementById("startBtn")?.focus();
+  });
+}
+
+function showLanding(elements: PageElements, focus = true): void {
+  currentUser = null;
+  elements.currentUser.textContent = "";
+  setPageView(elements, AUTH_VIEW_LANDING);
+
+  if (focus) {
+    window.requestAnimationFrame(() => {
+      elements.landingLoginButton.focus();
+    });
+  }
 }
 
 function showLogin(elements: PageElements, message?: string): void {
   currentUser = null;
-  elements.authPage.hidden = false;
-  elements.appPage.hidden = true;
   elements.currentUser.textContent = "";
+  setPageView(elements, AUTH_VIEW_LOGIN);
   setAuthView(elements, AUTH_VIEW_LOGIN);
 
   if (message) {
     showLoginError(elements, message);
-    elements.emailInput.focus();
   }
+
+  window.requestAnimationFrame(() => {
+    elements.emailInput.focus();
+  });
 }
 
 function showRegister(elements: PageElements): void {
   currentUser = null;
-  elements.authPage.hidden = false;
-  elements.appPage.hidden = true;
   elements.currentUser.textContent = "";
+  setPageView(elements, AUTH_VIEW_REGISTER);
   setAuthView(elements, AUTH_VIEW_REGISTER);
-  elements.registerNameInput.focus();
+  window.requestAnimationFrame(() => {
+    elements.registerNameInput.focus();
+  });
+}
+
+function setPageView(elements: PageElements, view: ApplicationView): void {
+  const pages: Array<[HTMLElement, ApplicationView]> = [
+    [elements.landingPage, AUTH_VIEW_LANDING],
+    [elements.authPage, AUTH_VIEW_LOGIN],
+    [elements.appPage, AUTH_VIEW_AUTHENTICATED],
+  ];
+
+  currentView = view;
+  document.body.dataset.appView = view;
+
+  for (const [page, pageView] of pages) {
+    const isVisible = pageView === AUTH_VIEW_LANDING
+      ? view === AUTH_VIEW_LANDING
+      : pageView === AUTH_VIEW_LOGIN
+        ? view === AUTH_VIEW_LOGIN || view === AUTH_VIEW_REGISTER
+        : view === AUTH_VIEW_AUTHENTICATED;
+
+    page.hidden = !isVisible;
+    if (isVisible) {
+      page.dataset.viewState = "entering";
+      window.requestAnimationFrame(() => {
+        page.dataset.viewState = "active";
+      });
+    }
+  }
+
+  document.title = view === AUTH_VIEW_LANDING
+    ? "EtiquetAI | Lectura operativa"
+    : view === AUTH_VIEW_AUTHENTICATED
+      ? "EtiquetAI | Escáner QR"
+      : "EtiquetAI | Acceso";
 }
 
 function setAuthView(elements: PageElements, view: AuthView): void {
@@ -304,14 +393,15 @@ function setAuthView(elements: PageElements, view: AuthView): void {
   elements.authPage.dataset.authView = view;
   elements.loginForm.hidden = !isLogin;
   elements.registerForm.hidden = isLogin;
-  elements.authTitle.textContent = isLogin ? "Bienvenido de nuevo" : "Crear cuenta";
+  elements.authTitle.textContent = isLogin ? "Ingresar al workspace" : "Crear una cuenta";
   elements.authSubtitle.textContent = isLogin
-    ? "Ingresá a tu cuenta para continuar."
-    : "Empezá a gestionar tus etiquetas con EtiquetAI.";
+    ? "Continuá con el flujo de lectura de EtiquetAI."
+    : "Guardá tu espacio de trabajo para empezar a escanear.";
   hideLoginError(elements);
   hideRegisterError(elements);
   elements.loginStatus.hidden = true;
   clearInputValidation(elements.authInputs);
+  updatePasswordStrength(elements);
 }
 
 function bindPasswordVisibility(elements: PageElements): void {
@@ -330,6 +420,51 @@ function bindPasswordVisibility(elements: PageElements): void {
       button.setAttribute("aria-label", shouldShow ? "Ocultar contraseña" : "Mostrar contraseña");
     });
   }
+}
+
+function bindPasswordStrength(elements: PageElements): void {
+  elements.registerPasswordInput.addEventListener("input", () => {
+    updatePasswordStrength(elements);
+  });
+}
+
+function updatePasswordStrength(elements: PageElements): void {
+  const password = elements.registerPasswordInput.value;
+  const strength = getPasswordStrength(password);
+  const previousScore = Number(elements.registerPasswordStrength.dataset.strength ?? "0");
+
+  elements.registerPasswordStrength.dataset.strength = String(strength.score);
+  elements.registerPasswordStrength.style.setProperty("--strength-progress", String(strength.progress));
+  elements.registerPasswordStrengthLabel.textContent = strength.label;
+  elements.registerPasswordStrengthHint.textContent = strength.hint;
+
+  if (previousScore !== strength.score) {
+    elements.registerPasswordStrength.classList.remove("is-changing");
+    window.requestAnimationFrame(() => {
+      elements.registerPasswordStrength.classList.add("is-changing");
+    });
+  }
+}
+
+function getPasswordStrength(password: string): { score: number; progress: number; label: string; hint: string } {
+  if (!password) {
+    return { score: 0, progress: 0, label: "Seguridad", hint: "Usá 8 caracteres o más." };
+  }
+
+  const hasLowercase = /[a-z]/.test(password);
+  const hasUppercase = /[A-Z]/.test(password);
+  const hasNumber = /\d/.test(password);
+  const hasSymbol = /[^A-Za-z\d]/.test(password);
+  const variety = [hasLowercase, hasUppercase, hasNumber, hasSymbol].filter(Boolean).length;
+
+  const lengthProgress = Math.min(password.length / 16, 1) * 0.45;
+  const varietyProgress = (variety / 4) * 0.55;
+  const progress = Math.min(1, Math.max(0.04, lengthProgress + varietyProgress));
+  const score = progress >= 0.84 ? 4 : progress >= 0.62 ? 3 : progress >= 0.3 ? 2 : 1;
+  const levels = ["", "Muy débil", "Débil", "Fuerte", "Muy fuerte"];
+  const hints = ["", "Agregá más caracteres.", "Sumá mayúsculas, números o símbolos.", "Buena combinación de caracteres.", "Buena contraseña para usar."];
+
+  return { score, progress, label: levels[score], hint: hints[score] };
 }
 
 function resetPasswordVisibility(elements: PageElements): void {
@@ -509,20 +644,4 @@ function getRegisterErrorMessage(error: unknown): string {
   }
 
   return "No pudimos crear la cuenta. Intentá nuevamente.";
-}
-
-function getRestoreErrorMessage(error: unknown): string {
-  if (error instanceof ApiNetworkError) {
-    return "No se pudo conectar con el servidor. Intentá nuevamente en unos segundos.";
-  }
-
-  if (error instanceof ApiConfigurationError) {
-    return "No se pudo iniciar sesión. Verificá la configuración del servidor.";
-  }
-
-  if (isUnauthorized(error)) {
-    return "Tu sesión expiró. Iniciá sesión nuevamente.";
-  }
-
-  return "No se pudo iniciar sesión. Intentá nuevamente.";
 }

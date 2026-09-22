@@ -12,6 +12,7 @@ export class App {
   private backendUrlEl: HTMLInputElement | null = null;
   private enableReportEl: HTMLInputElement | null = null;
   private reportStatusEl: HTMLDivElement | null = null;
+  private scannerStatusEl: HTMLDivElement | null = null;
   private reporter: QRCodeReporter | null = null;
 
   constructor(scanner: Scanner, storage: QRCodeStorage) {
@@ -24,6 +25,7 @@ export class App {
     this.scanner.setDetectedCallback(async (code) => {
       await this.storage.save(code);
       this.refreshList();
+      this.setScannerStatus(`Código detectado: ${code}`);
       // report if enabled
       if (this.enableReportEl?.checked) {
         const url = this.backendUrlEl?.value || "";
@@ -33,9 +35,9 @@ export class App {
           }
           try {
             await this.reporter.report(code);
-            if (this.reportStatusEl) this.reportStatusEl.textContent = `Último enviado: ${code} `;
-          } catch (e) {
-            if (this.reportStatusEl) this.reportStatusEl.textContent = `Error al enviar: ${e}`;
+            if (this.reportStatusEl) this.reportStatusEl.textContent = `Enviado: ${code}`;
+          } catch {
+            if (this.reportStatusEl) this.reportStatusEl.textContent = `No se pudo enviar ${code}. Revisá la URL.`;
           }
         }
       }
@@ -46,8 +48,9 @@ export class App {
         await this.scanner.start();
         this.startBtn.disabled = true;
         this.stopBtn.disabled = false;
-      } catch (e) {
-        alert("No se pudo iniciar la cámara: " + e);
+        this.setScannerStatus("Cámara activa. Alineá un código dentro del marco.");
+      } catch {
+        this.setScannerStatus("No se pudo iniciar la cámara. Revisá el permiso del navegador.");
       }
     });
 
@@ -55,11 +58,13 @@ export class App {
       this.scanner.stop();
       this.startBtn.disabled = false;
       this.stopBtn.disabled = true;
+      this.setScannerStatus("Cámara detenida. Iniciá para leer un código.");
     });
 
     this.backendUrlEl = document.getElementById("backendUrl") as HTMLInputElement | null;
     this.enableReportEl = document.getElementById("enableReport") as HTMLInputElement | null;
     this.reportStatusEl = document.getElementById("reportStatus") as HTMLDivElement | null;
+    this.scannerStatusEl = document.getElementById("scannerStatus") as HTMLDivElement | null;
 
     this.refreshList();
   }
@@ -68,15 +73,30 @@ export class App {
     this.scanner.stop();
     this.startBtn.disabled = false;
     this.stopBtn.disabled = true;
+    this.setScannerStatus("Cámara detenida. Iniciá para leer un código.");
   }
 
   async refreshList() {
     const codes = await this.storage.list();
     this.codesListEl.innerHTML = "";
+    if (codes.length === 0) {
+      const emptyState = document.createElement("li");
+      emptyState.className = "empty-state";
+      emptyState.textContent = "Todavía no hay lecturas. Iniciá la cámara para sumar el primer código.";
+      this.codesListEl.appendChild(emptyState);
+      return;
+    }
+
     for (const c of codes) {
       const li = document.createElement("li");
       li.textContent = c;
       this.codesListEl.appendChild(li);
+    }
+  }
+
+  private setScannerStatus(message: string): void {
+    if (this.scannerStatusEl) {
+      this.scannerStatusEl.textContent = message;
     }
   }
 }
