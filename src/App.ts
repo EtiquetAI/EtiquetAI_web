@@ -6,6 +6,7 @@ import { APICodeReporter } from "./implementations/APICodeReporter.js";
 export class App {
   private scanner: Scanner;
   private storage: QRCodeStorage;
+  private readonly onScan: ((code: string) => Promise<void>) | null;
   private codesListEl: HTMLUListElement;
   private startBtn: HTMLButtonElement;
   private stopBtn: HTMLButtonElement;
@@ -15,9 +16,10 @@ export class App {
   private scannerStatusEl: HTMLDivElement | null = null;
   private reporter: QRCodeReporter | null = null;
 
-  constructor(scanner: Scanner, storage: QRCodeStorage) {
+  constructor(scanner: Scanner, storage: QRCodeStorage, onScan?: (code: string) => Promise<void>) {
     this.scanner = scanner;
     this.storage = storage;
+    this.onScan = onScan ?? null;
     this.codesListEl = document.getElementById("codesList") as HTMLUListElement;
     this.startBtn = document.getElementById("startBtn") as HTMLButtonElement;
     this.stopBtn = document.getElementById("stopBtn") as HTMLButtonElement;
@@ -26,6 +28,15 @@ export class App {
       await this.storage.save(code);
       this.refreshList();
       this.setScannerStatus(`Código detectado: ${code}`);
+
+      if (this.onScan) {
+        try {
+          await this.onScan(code);
+        } catch {
+          this.setScannerStatus(`Código detectado: ${code} — no se pudo guardar en el servidor.`);
+        }
+      }
+
       // report if enabled
       if (this.enableReportEl?.checked) {
         const url = this.backendUrlEl?.value || "";

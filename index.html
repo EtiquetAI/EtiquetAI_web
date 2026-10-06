@@ -311,7 +311,7 @@
             <span class="brand-name" translate="no">Etiquet<span>AI</span></span>
           </div>
           <div class="app-context">
-            <h1>Escáner QR</h1>
+            <h1 id="appTitle">Escanear QR</h1>
             <p class="app-kicker">Trazabilidad de paquetes</p>
           </div>
           <div class="app-actions">
@@ -320,43 +320,112 @@
           </div>
         </header>
 
-        <section class="app-toolbar" aria-label="Controles del escáner">
-          <div class="scanner-actions">
-            <button id="startBtn" class="button button-primary" type="button">Iniciar cámara</button>
-            <button id="stopBtn" class="button button-secondary" type="button" disabled>Detener</button>
-          </div>
-          <div id="scannerStatus" class="scanner-status" role="status" aria-live="polite">Cámara detenida. Iniciá para leer un código.</div>
-          <details class="report-settings">
-            <summary>Configurar envío</summary>
-            <div class="report-settings-body">
-              <label for="backendUrl">Backend URL</label>
-              <input id="backendUrl" name="backend_url" type="url" inputmode="url" autocomplete="off" placeholder="https://mi.api/qr…" />
-              <label class="report-toggle" for="enableReport"><input type="checkbox" id="enableReport" name="enable_report" /> Enviar cada lectura</label>
-              <div id="reportStatus" class="report-status" role="status" aria-live="polite"></div>
-            </div>
-          </details>
-        </section>
+        <nav class="app-nav" aria-label="Vistas del workspace">
+          <button class="app-nav-tab is-active" type="button" data-app-tab="scan" aria-current="page">
+            <span class="app-nav-dot" aria-hidden="true"></span>Escanear QR
+          </button>
+          <button class="app-nav-tab" type="button" data-app-tab="upload">
+            <span class="app-nav-dot" aria-hidden="true"></span>Ingresar imagen
+          </button>
+          <button class="app-nav-tab" type="button" data-app-tab="results">
+            <span class="app-nav-dot" aria-hidden="true"></span>Resultados
+          </button>
+        </nav>
 
-        <div class="app-grid">
-          <section class="viewer-panel" aria-labelledby="viewerTitle">
-            <div class="panel-heading">
-              <div><span class="panel-label">LIVE INPUT</span><h2 id="viewerTitle">Encuadre de lectura</h2></div>
-              <span class="panel-state"><span class="signal-dot" aria-hidden="true"></span> cámara</span>
+        <div class="app-view" data-app-panel="scan">
+          <section class="app-toolbar" aria-label="Controles del escáner">
+            <div class="scanner-actions">
+              <button id="startBtn" class="button button-primary" type="button">Iniciar cámara</button>
+              <button id="stopBtn" class="button button-secondary" type="button" disabled>Detener</button>
             </div>
-            <div class="viewer">
-              <video id="video" autoplay playsinline></video>
-              <canvas id="overlay" hidden></canvas>
-              <div class="scan-frame" aria-hidden="true"><span></span></div>
-              <p class="viewer-hint">Alineá el código dentro del marco</p>
-            </div>
+            <div id="scannerStatus" class="scanner-status" role="status" aria-live="polite">Cámara detenida. Iniciá para leer un código.</div>
+            <details class="report-settings">
+              <summary>Configurar envío</summary>
+              <div class="report-settings-body">
+                <label for="backendUrl">Backend URL</label>
+                <input id="backendUrl" name="backend_url" type="url" inputmode="url" autocomplete="off" placeholder="https://mi.api/qr…" />
+                <label class="report-toggle" for="enableReport"><input type="checkbox" id="enableReport" name="enable_report" /> Enviar cada lectura</label>
+                <div id="reportStatus" class="report-status" role="status" aria-live="polite"></div>
+              </div>
+            </details>
           </section>
 
-          <section class="results-panel" aria-labelledby="resultsTitle">
+          <div class="app-grid">
+            <section class="viewer-panel" aria-labelledby="viewerTitle">
+              <div class="panel-heading">
+                <div><span class="panel-label">LIVE INPUT</span><h2 id="viewerTitle">Encuadre de lectura</h2></div>
+                <span class="panel-state"><span class="signal-dot" aria-hidden="true"></span> cámara</span>
+              </div>
+              <div class="viewer">
+                <video id="video" autoplay playsinline></video>
+                <canvas id="overlay" hidden></canvas>
+                <div class="scan-frame" aria-hidden="true"><span></span></div>
+                <p class="viewer-hint">Alineá el código dentro del marco</p>
+              </div>
+            </section>
+
+            <section class="results-panel" aria-labelledby="resultsTitle">
+              <div class="panel-heading">
+                <div><span class="panel-label">RECENT SCANS</span><h2 id="resultsTitle">Últimas lecturas</h2></div>
+                <span class="panel-state">en vivo</span>
+              </div>
+              <ul id="codesList"></ul>
+            </section>
+          </div>
+        </div>
+
+        <div class="app-view" data-app-panel="upload" hidden>
+          <section class="upload-panel" aria-labelledby="uploadTitle">
             <div class="panel-heading">
-              <div><span class="panel-label">LOCAL OUTPUT</span><h2 id="resultsTitle">Códigos detectados</h2></div>
-              <span class="panel-state">localStorage</span>
+              <div><span class="panel-label">FILE INPUT</span><h2 id="uploadTitle">Cargar imagen de etiqueta</h2></div>
+              <span class="panel-state">procesada en el servidor</span>
             </div>
-            <ul id="codesList"></ul>
+
+            <div class="upload-body">
+              <label id="uploadDropzone" class="upload-dropzone" for="imageInput">
+                <input id="imageInput" name="image" type="file" accept="image/jpeg,image/png" hidden />
+                <span class="upload-dropzone-title">Elegí una imagen o arrastrala acá</span>
+                <span class="upload-dropzone-hint">JPG o PNG, hasta 10 MB. El QR que contenga pasa a la tabla de resultados.</span>
+              </label>
+              <figure id="uploadPreview" class="upload-preview" hidden>
+                <img id="uploadPreviewImage" alt="Vista previa de la imagen seleccionada" />
+                <figcaption id="uploadPreviewCaption"></figcaption>
+              </figure>
+            </div>
+
+            <div id="uploadStatus" class="upload-status" role="status" aria-live="polite"></div>
+            <ul id="uploadedList" class="uploaded-list"></ul>
+          </section>
+        </div>
+
+        <div class="app-view" data-app-panel="results" hidden>
+          <section class="table-panel" aria-labelledby="tableTitle">
+            <div class="panel-heading">
+              <div><span class="panel-label">DATABASE OUTPUT</span><h2 id="tableTitle">Resultados del escaneo</h2></div>
+              <div class="table-actions">
+                <span id="resultsCount" class="panel-state">0 etiquetas</span>
+                <button id="refreshResultsButton" class="button button-secondary button-compact" type="button">Actualizar</button>
+                <button id="exportXlsxButton" class="button button-primary button-compact" type="button" disabled>Descargar Excel</button>
+              </div>
+            </div>
+
+            <div class="table-scroll">
+              <table class="results-table">
+                <caption class="sr-only">Etiquetas leídas, almacenadas en la base de datos</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" class="col-index">#</th>
+                    <th scope="col" class="col-date">Fecha</th>
+                    <th scope="col" class="col-content">Contenido</th>
+                    <th scope="col" class="col-source">Origen</th>
+                    <th scope="col" class="col-file">Archivo</th>
+                  </tr>
+                </thead>
+                <tbody id="resultsTableBody"></tbody>
+              </table>
+            </div>
+
+            <p id="resultsTableStatus" class="table-status" role="status" aria-live="polite"></p>
           </section>
         </div>
       </div>

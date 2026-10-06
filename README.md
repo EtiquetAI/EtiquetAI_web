@@ -1,6 +1,6 @@
 # EtiquetAI Web
 
-EtiquetAI is a Vite and TypeScript frontend for scanning QR codes from a browser camera and keeping detected values in local storage. Authentication uses the EtiquetAI Go API with JWT bearer tokens. The optional API reporting adapter uses the browser `fetch` API to send detected codes to a URL entered by the user.
+EtiquetAI is a Vite and TypeScript frontend for scanning QR codes from a browser camera, uploading label images for server-side decoding, and reviewing both in a results table backed by the API database. Authentication uses the EtiquetAI Go API with JWT bearer tokens.
 
 ## Requirements
 
@@ -26,6 +26,22 @@ VITE_API_BASE_URL=http://localhost:8080
 The same value can be stored in `.env.local`. The authentication screen starts at login and switches between login and registration without routing. The frontend sends registration requests to `POST /api/v1/auth/register` with `name`, `email`, `password`, and an optional `phone_number`, then returns to login with the registered email prefilled. Registration does not create a session because the backend returns a user but no tokens.
 
 Login uses `POST /api/v1/auth/login`, validates the session with `GET /api/v1/users/me`, and stores the access and refresh tokens in `sessionStorage` only. On reload, the frontend restores the JWT session and refreshes it through the backend when the access token has expired.
+
+## Authenticated workspace
+
+After login the app renders a single workspace with a three-tab navigation bar. Each tab swaps the active panel and updates the page title.
+
+| Tab | Panel | Behaviour |
+| --- | --- | --- |
+| Escanear QR | `#appPage` scanner | Camera preview, live detection, and the recent scans list. Starting a scan stops whatever else was running. |
+| Ingresar imagen | upload panel | Drag-and-drop or file picker with an inline preview. Uploads via `POST /api/v1/images` and refreshes the results table on success. |
+| Resultados | results table | Reads `GET /api/v1/reads` and renders `#`, `Fecha`, `Contenido`, `Origen`, and `Archivo`. |
+
+The results table is not persisted in the browser. Every row comes from the `label_reads` table through the API, scoped to the logged-in user, so reloads and other devices see the same data. The origin column shows `Cámara` or `Imagen` depending on how the value was captured, and a failed refresh leaves the current rows in place while showing an error status.
+
+`Descargar Excel` builds the `.xlsx` file in the browser with no third-party spreadsheet dependency and triggers a download. `Actualizar` re-fetches the current page.
+
+The scanner panel also keeps the optional reporting adapter: when `Enviar cada lectura` is enabled under `Configurar envío`, each detected code is additionally posted to the `Backend URL` entered there through the browser `fetch` API. This is independent of the results table, which always reads from `GET /api/v1/reads`.
 
 ## Build
 

@@ -10,6 +10,10 @@ import { LocalStorageQRCodeStorage } from "./implementations/LocalStorageQRCodeS
 import { App } from "./App.js";
 import { clearSession, getAccessToken, saveSession } from "./auth/session.js";
 import { restoreUserSession } from "./auth/restore.js";
+import { UploadPanel } from "./upload/UploadPanel.js";
+import { ResultsTable } from "./results/ResultsTable.js";
+import { AppNavigation } from "./nav/AppNavigation.js";
+import { readsApi } from "./api/reads.js";
 
 const AUTH_VIEW_LANDING = "landing" as const;
 const AUTH_VIEW_LOGIN = "login" as const;
@@ -62,6 +66,9 @@ interface ValidationError {
 }
 
 let appInstance: App | null = null;
+let uploadPanel: UploadPanel | null = null;
+let resultsTable: ResultsTable | null = null;
+let navigation: AppNavigation | null = null;
 let currentUser: User | null = null;
 let currentView: ApplicationView = AUTH_VIEW_LANDING;
 
@@ -306,12 +313,36 @@ function showAuthenticatedApp(user: User, elements: PageElements): void {
     const scanner = new BrowserCameraScanner(video, overlay);
     const storage = new LocalStorageQRCodeStorage();
 
-    appInstance = new App(scanner, storage);
+    resultsTable = new ResultsTable({ getAccessToken });
+
+    appInstance = new App(scanner, storage, async (code) => {
+      const accessToken = getAccessToken();
+      if (accessToken) {
+        await readsApi.createRead(code, accessToken);
+      }
+      void resultsTable?.refresh();
+    });
+
+    uploadPanel = new UploadPanel({
+      getAccessToken,
+      onUploaded: () => void resultsTable?.refresh(),
+    });
+
+    navigation = new AppNavigation((view) => {
+      if (view !== "scan") {
+        appInstance?.stop();
+      }
+      if (view === "results") {
+        void resultsTable?.refresh();
+      }
+    });
   }
 
   currentUser = user;
   elements.currentUser.textContent = `${user.name} — ${user.role}`;
   setPageView(elements, AUTH_VIEW_AUTHENTICATED);
+  navigation?.show("scan");
+  void uploadPanel?.refresh();
   window.requestAnimationFrame(() => {
     document.getElementById("startBtn")?.focus();
   });
