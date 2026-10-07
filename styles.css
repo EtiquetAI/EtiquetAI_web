@@ -29,6 +29,7 @@
   --duration-standard: 260ms;
   --duration-slow: 480ms;
   --page-width: 1320px;
+  --strength-progress: 0;
 }
 
 * {
@@ -255,6 +256,17 @@ body[data-session-state="checking"] main {
   background: var(--surface-hover);
 }
 
+.button-danger {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.button-danger:hover:not(:disabled) {
+  background: var(--danger);
+  color: var(--bg-deep);
+}
+
 .button-compact {
   min-height: 40px;
   padding: 9px 14px;
@@ -267,9 +279,12 @@ body[data-session-state="checking"] main {
 }
 
 .text-button {
+  border: 0;
+  background: transparent;
   min-height: 44px;
   padding: 6px 0;
   color: var(--fg-muted);
+  cursor: pointer;
   font-size: 0.82rem;
   font-weight: 500;
   transition: color var(--duration-fast) var(--ease-out);
@@ -1370,10 +1385,32 @@ input[aria-invalid="true"] {
 }
 
 .results-table .col-content {
+  width: 280px;
+  max-width: 280px;
+  overflow: hidden;
   color: var(--fg);
   font-family: var(--font-mono);
   font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.results-table .col-destino,
+.results-table .col-destinatario {
+  max-width: 200px;
   overflow-wrap: anywhere;
+}
+
+.results-table .col-cp {
+  color: var(--fg);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.results-table .col-tracking {
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
 }
 
 .results-table .col-source {

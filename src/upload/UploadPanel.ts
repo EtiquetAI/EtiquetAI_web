@@ -10,12 +10,14 @@ export class UploadPanel {
   private readonly status: HTMLElement;
   private readonly list: HTMLElement;
   private readonly getAccessToken: () => string | null;
-  private readonly onUploaded?: (image: UploadedImage) => void;
-  private busy = false;
+  private readonly onUploaded?: (images: UploadedImage[]) => void;
+  private readonly uploadQueue: File[] = [];
+  private processing = false;
+  private rejectedCount = 0;
 
   constructor(options: {
     getAccessToken: () => string | null;
-    onUploaded?: (image: UploadedImage) => void;
+    onUploaded?: (images: UploadedImage[]) => void;
   }) {
     this.getAccessToken = options.getAccessToken;
     this.onUploaded = options.onUploaded;
@@ -29,10 +31,8 @@ export class UploadPanel {
     this.list = this.require("uploadedList");
 
     this.input.addEventListener("change", () => {
-      const file = this.input.files?.[0];
-      if (file) {
-        void this.handleFile(file);
-      }
+      const files = Array.from(this.input.files ?? []);
+      if (files.length > 0) void this.enqueueFiles(files);
       this.input.value = "";
     });
 
@@ -48,10 +48,8 @@ export class UploadPanel {
     this.dropzone.addEventListener("drop", (event) => {
       event.preventDefault();
       this.dropzone.classList.remove("is-dragging");
-      const file = event.dataTransfer?.files?.[0];
-      if (file) {
-        void this.handleFile(file);
-      }
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      if (files.length > 0) void this.enqueueFiles(files);
     });
   }
 
@@ -66,40 +64,70 @@ export class UploadPanel {
     }
   }
 
-  private async handleFile(file: File): Promise<void> {
-    if (this.busy) return;
+  private async enqueueFiles(files: File[]): Promise<void> {
+    for (const file of files) {
+      const validationError = imagesApi.validateImageFile(file);
+      if (validationError) {
+        this.rejectedCount++;
+        this.setStatus(`${file.name}: ${validationError}`, "error");
+        continue;
+      }
+      this.uploadQueue.push(file);
+    }
 
-    const validationError = imagesApi.validateImageFile(file);
-    if (validationError) {
-      this.showPreview(file);
-      this.setStatus(validationError, "error");
+    if (this.uploadQueue.length === 0) {
+      if (!this.processing) this.rejectedCount = 0;
+      return;
+    }
+    if (this.processing) {
+      this.setStatus(`${this.uploadQueue.length} imagen(es) en espera.`, "neutral");
       return;
     }
 
-    const token = this.getAccessToken();
-    if (!token) {
-      this.setStatus("Tu sesión expiró. Volvé a iniciar sesión.", "error");
-      return;
-    }
-
-    this.showPreview(file);
-    this.busy = true;
-    this.setStatus(`Subiendo ${file.name}…`, "neutral");
-
+    this.processing = true;
+    let uploadedCount = 0;
+    let failedCount = 0;
+    const uploadedImages: UploadedImage[] = [];
     try {
-      const uploaded = await imagesApi.uploadImage(file, token);
-      this.setStatus(
-        uploaded.qr_content
-          ? `Imagen guardada. QR leído: ${uploaded.qr_content}`
-          : "Imagen guardada. No se encontró un código QR en la imagen.",
-        "success"
-      );
-      this.onUploaded?.(uploaded);
-      await this.refresh();
-    } catch (error) {
-      this.setStatus(describeError(error), "error");
+      while (this.uploadQueue.length > 0) {
+        const file = this.uploadQueue.shift();
+        if (!file) continue;
+        this.showPreview(file);
+        this.setStatus(`Subiendo ${file.name}… (${this.uploadQueue.length} en espera)`, "neutral");
+
+        const token = this.getAccessToken();
+        if (!token) {
+          failedCount += 1 + this.uploadQueue.length;
+          this.uploadQueue.length = 0;
+          this.setStatus("Tu sesión expiró. Volvé a iniciar sesión.", "error");
+          break;
+        }
+
+        try {
+          uploadedImages.push(await imagesApi.uploadImage(file, token));
+          uploadedCount++;
+        } catch (error) {
+          failedCount++;
+          this.setStatus(`${file.name}: ${describeError(error)}`, "error");
+        }
+      }
     } finally {
-      this.busy = false;
+      this.processing = false;
+    }
+
+    failedCount += this.rejectedCount;
+    this.rejectedCount = 0;
+
+    if (uploadedCount > 0) {
+      this.onUploaded?.(uploadedImages);
+      await this.refresh();
+    }
+    if (uploadedCount > 0 && failedCount === 0) {
+      this.setStatus(`Se cargaron ${uploadedCount} imagen(es). El OCR está procesando las etiquetas.`, "success");
+    } else if (uploadedCount > 0) {
+      this.setStatus(`Se cargaron ${uploadedCount}; ${failedCount} no se pudieron cargar.`, "error");
+    } else if (failedCount > 0) {
+      this.setStatus(`${failedCount} imagen(es) no se pudieron cargar.`, "error");
     }
   }
 

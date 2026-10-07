@@ -383,9 +383,9 @@
 
             <div class="upload-body">
               <label id="uploadDropzone" class="upload-dropzone" for="imageInput">
-                <input id="imageInput" name="image" type="file" accept="image/jpeg,image/png" hidden />
-                <span class="upload-dropzone-title">Elegí una imagen o arrastrala acá</span>
-                <span class="upload-dropzone-hint">JPG o PNG, hasta 10 MB. El QR que contenga pasa a la tabla de resultados.</span>
+                <input id="imageInput" name="image" type="file" accept="image/jpeg,image/png" multiple hidden />
+                <span class="upload-dropzone-title">Elegí imágenes o arrastralas acá</span>
+                <span class="upload-dropzone-hint">JPG o PNG, hasta 10 MB cada una. Sus datos aparecen en la tabla de resultados.</span>
               </label>
               <figure id="uploadPreview" class="upload-preview" hidden>
                 <img id="uploadPreviewImage" alt="Vista previa de la imagen seleccionada" />
@@ -406,6 +406,7 @@
                 <span id="resultsCount" class="panel-state">0 etiquetas</span>
                 <button id="refreshResultsButton" class="button button-secondary button-compact" type="button">Actualizar</button>
                 <button id="exportXlsxButton" class="button button-primary button-compact" type="button" disabled>Descargar Excel</button>
+                <button id="clearResultsButton" class="button button-danger button-compact" type="button" disabled>Borrar resultados</button>
               </div>
             </div>
 
@@ -416,9 +417,14 @@
                   <tr>
                     <th scope="col" class="col-index">#</th>
                     <th scope="col" class="col-date">Fecha</th>
+                    <th scope="col" class="col-destino">Destino</th>
+                    <th scope="col" class="col-cp">Código postal</th>
+                    <th scope="col" class="col-destinatario">Destinatario</th>
+                    <th scope="col" class="col-tracking">Tracking</th>
                     <th scope="col" class="col-content">Contenido</th>
                     <th scope="col" class="col-source">Origen</th>
                     <th scope="col" class="col-file">Archivo</th>
+                    <th scope="col" class="col-actions">Acciones</th>
                   </tr>
                 </thead>
                 <tbody id="resultsTableBody"></tbody>

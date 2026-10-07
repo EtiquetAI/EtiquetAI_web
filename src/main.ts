@@ -325,7 +325,11 @@ function showAuthenticatedApp(user: User, elements: PageElements): void {
 
     uploadPanel = new UploadPanel({
       getAccessToken,
-      onUploaded: () => void resultsTable?.refresh(),
+      onUploaded: (images) => {
+        void resultsTable?.refresh();
+        // Follow the batch until its OCR results have reached the table.
+        void resultsTable?.watchImageResults(images.map((image) => image.id));
+      },
     });
 
     navigation = new AppNavigation((view) => {
