@@ -10,3 +10,8 @@ dist/
 /.impeccable/
 /DESIGN.md
 /PRODUCT.md
+
+# Generated browser-test artifacts.
+/playwright-report/
+/test-results/
+/blob-report/
