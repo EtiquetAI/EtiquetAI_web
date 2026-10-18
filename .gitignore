@@ -5,3 +5,8 @@ dist/
 !.env.example
 .DS_Store
 .codegraph/
+
+# Local design-tool metadata and reference notes (not published).
+/.impeccable/
+/DESIGN.md
+/PRODUCT.md
