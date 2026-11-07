@@ -33,6 +33,12 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Build (type-check and bundle)
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
       - name: Type-check Playwright tests
         run: npm run test:e2e:types
 

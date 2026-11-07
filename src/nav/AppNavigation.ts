@@ -1,9 +1,10 @@
-export type AppView = "scan" | "upload" | "results";
+export type AppView = "scan" | "upload" | "results" | "metrics";
 
 const TITLES: Record<AppView, string> = {
   scan: "Escanear QR",
   upload: "Ingresar imagen",
   results: "Resultados",
+  metrics: "Métricas",
 };
 
 export class AppNavigation {
@@ -72,5 +73,5 @@ export class AppNavigation {
 }
 
 function isAppView(value: string | undefined): value is AppView {
-  return value === "scan" || value === "upload" || value === "results";
+  return value === "scan" || value === "upload" || value === "results" || value === "metrics";
 }

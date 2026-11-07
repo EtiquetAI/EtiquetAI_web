@@ -35,12 +35,25 @@ export class MockAPI {
   uploadStatus = 201;
   readsStatus = 200;
   deleteStatus = 204;
+  patchStatus = 200;
+  /** Answer of `POST /images/batch`; tests set it to exercise the zip flow. */
+  batchResult: unknown | undefined;
+  metrics: unknown = {
+    images: { total: 2, by_ocr_status: { done: 2 } },
+    reads: {
+      total: 2, by_validation: { OK: 1, REVIEW: 1 }, by_review: { pending: 1, corrected: 1 }, reviewed: 1, corrected: 1,
+      correction_rate: 1, needs_attention_rate: 0.5, corrected_by_field: { destinatario: 1 },
+    },
+    timing: { processed: 2, avg_seconds: 4.5, images_per_minute: 10 },
+  };
   expiredAccess = false;
   abortLogin = false;
   abortLogout = false;
   loginGate: Promise<void> | undefined;
   ocrResult: LabelRead | undefined;
   emptyPolls = 0;
+  /** OCR states handed out by successive `GET /images?ids=` polls; the last one repeats. */
+  ocrStates: Array<Partial<UploadedImage>> = [];
 
   matching(method: string, pathname: string): Request[] {
     return this.requests.filter((request) =>
@@ -114,7 +127,13 @@ export const test = base.extend<{ api: MockAPI }>({
       if (method === "POST" && path === "/api/v1/auth/logout") {
         return api.abortLogout ? abort() : route.fulfill({ status: 204 });
       }
-      if (method === "GET" && path === "/api/v1/images") return json(200, api.images);
+      if (method === "GET" && path === "/api/v1/images") {
+        if (url.searchParams.has("ids") && api.ocrStates.length > 0) {
+          const next = api.ocrStates.length > 1 ? api.ocrStates.shift() : api.ocrStates[0];
+          api.images = api.images.map((image) => ({ ...image, ...next }));
+        }
+        return json(200, api.images);
+      }
       if (method === "POST" && path === "/api/v1/images") {
         if (api.uploadStatus !== 201) return json(api.uploadStatus, { error: "invalid_request" });
         const filename = request.postDataBuffer()?.toString().match(/filename="([^"]+)"/)?.[1];
@@ -132,6 +151,54 @@ export const test = base.extend<{ api: MockAPI }>({
           api.reads = [api.ocrResult];
         }
         return json(200, api.reads);
+      }
+      if (method === "GET" && /^\/api\/v1\/images\/[^/]+\/file$/.test(path)) {
+        return route.fulfill({ status: 200, contentType: "image/png", body: pngFile.buffer });
+      }
+      if (method === "POST" && path === "/api/v1/images/batch") {
+        return json(201, api.batchResult ?? { batch_id: "batch-test", total: 0, accepted: [], rejected: [] });
+      }
+      if (method === "POST" && /^\/api\/v1\/images\/[^/]+\/retry$/.test(path)) {
+        const id = path.split("/")[4];
+        const image = api.images.find((item) => item.id === id);
+        if (!image) return json(404, { error: "not_found" });
+        image.ocr_status = "queued";
+        return json(200, image);
+      }
+      if (method === "POST" && path === "/api/v1/images/retry-failed") {
+        return json(200, { retried: 0, failed: 0, images: [] });
+      }
+      if (method === "GET" && path === "/api/v1/reads/export") {
+        const format = url.searchParams.get("format") ?? "csv";
+        return route.fulfill({
+          status: 200,
+          contentType: format === "csv" ? "text/csv" : "application/json",
+          headers: { "Content-Disposition": `attachment; filename="etiquetai-lecturas.${format}"`, "Access-Control-Expose-Headers": "Content-Disposition", "Access-Control-Allow-Origin": "*" },
+          body: format === "csv" ? "id,archivo\n" : "[]",
+        });
+      }
+      if (method === "PATCH" && path.startsWith("/api/v1/reads/")) {
+        if (api.patchStatus !== 200) return json(api.patchStatus, { error: "invalid_value" });
+        const id = decodeURIComponent(path.split("/")[4]);
+        const body = JSON.parse(request.postData() ?? "{}") as Record<string, unknown>;
+        const current = api.reads.find((read) => read.id === id);
+        if (!current) return json(404, { error: "not_found" });
+        const corrections: Record<string, unknown> = { ...(current.corrections ?? {}) };
+        const next: Record<string, unknown> = { ...current };
+        for (const field of ["destinatario", "direccion", "codigo_postal", "destino", "tracking"]) {
+          if (typeof body[field] === "string") {
+            corrections[field] = { original: (current as unknown as Record<string, unknown>)[field] ?? null, corrected: body[field] || null };
+            next[field] = body[field] || null;
+          }
+        }
+        next.review_status = Object.keys(corrections).length > 0 ? "corrected" : "confirmed";
+        next.corrections = corrections;
+        const updated = next as unknown as LabelRead;
+        api.reads = api.reads.map((read) => (read.id === id ? updated : read));
+        return json(200, updated);
+      }
+      if (method === "GET" && path === "/api/v1/metrics/summary") {
+        return json(200, api.metrics);
       }
       if (method === "DELETE" && (path === "/api/v1/reads" || path.startsWith("/api/v1/reads/"))) {
         if (api.deleteStatus !== 204) return json(api.deleteStatus, { error: "internal_error" });

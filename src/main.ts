@@ -12,8 +12,11 @@ import { clearSession, getAccessToken, saveSession } from "./auth/session.js";
 import { restoreUserSession } from "./auth/restore.js";
 import { UploadPanel } from "./upload/UploadPanel.js";
 import { ResultsTable } from "./results/ResultsTable.js";
+import { OcrWatcher } from "./ocr/OcrWatcher.js";
 import { AppNavigation } from "./nav/AppNavigation.js";
 import { readsApi } from "./api/reads.js";
+import { MetricsPanel } from "./metrics/MetricsPanel.js";
+import { clearImageCache } from "./results/ImageCache.js";
 
 const AUTH_VIEW_LANDING = "landing" as const;
 const AUTH_VIEW_LOGIN = "login" as const;
@@ -68,7 +71,9 @@ interface ValidationError {
 let appInstance: App | null = null;
 let uploadPanel: UploadPanel | null = null;
 let resultsTable: ResultsTable | null = null;
+let ocrWatcher: OcrWatcher | null = null;
 let navigation: AppNavigation | null = null;
+let metricsPanel: MetricsPanel | null = null;
 let currentUser: User | null = null;
 let currentView: ApplicationView = AUTH_VIEW_LANDING;
 
@@ -296,6 +301,7 @@ async function handleLogout(elements: PageElements): Promise<void> {
     // Local session cleanup must not depend on the logout request succeeding.
   } finally {
     clearSession();
+    clearImageCache();
     appInstance?.stop();
     showLanding(elements);
     elements.loginForm.reset();
@@ -313,7 +319,21 @@ function showAuthenticatedApp(user: User, elements: PageElements): void {
     const scanner = new BrowserCameraScanner(video, overlay);
     const storage = new LocalStorageQRCodeStorage();
 
-    resultsTable = new ResultsTable({ getAccessToken });
+    ocrWatcher = new OcrWatcher({
+      getAccessToken,
+      handlers: {
+        onImages: (images) => uploadPanel?.updateImages(images),
+        onReads: (reads) => resultsTable?.mergeReads(reads),
+        onError: (message) => resultsTable?.notify(message, "error"),
+        onTimeout: (pending) =>
+          resultsTable?.notify(
+            `${pending} imagen(es) todavía no tienen datos OCR disponibles. Podés actualizar la tabla más tarde.`,
+            "neutral",
+          ),
+      },
+    });
+
+    resultsTable = new ResultsTable({ getAccessToken, onCleared: () => ocrWatcher?.cancel() });
 
     appInstance = new App(scanner, storage, async (code) => {
       const accessToken = getAccessToken();
@@ -327,10 +347,16 @@ function showAuthenticatedApp(user: User, elements: PageElements): void {
       getAccessToken,
       onUploaded: (images) => {
         void resultsTable?.refresh();
-        // Follow the batch until its OCR results have reached the table.
-        void resultsTable?.watchImageResults(images.map((image) => image.id));
+        // Follow the batch until the OCR has finished with every image.
+        void ocrWatcher?.watch(images.map((image) => image.id));
       },
+      onPendingImages: (imageIDs) => {
+        void ocrWatcher?.watch(imageIDs);
+      },
+      onBatches: (batches) => resultsTable?.setBatches(batches),
     });
+
+    metricsPanel = new MetricsPanel({ getAccessToken });
 
     navigation = new AppNavigation((view) => {
       if (view !== "scan") {
@@ -339,6 +365,9 @@ function showAuthenticatedApp(user: User, elements: PageElements): void {
       if (view === "results") {
         void resultsTable?.refresh();
       }
+      if (view === "metrics") {
+        void metricsPanel?.refresh();
+      }
     });
   }
 
@@ -346,7 +375,7 @@ function showAuthenticatedApp(user: User, elements: PageElements): void {
   elements.currentUser.textContent = `${user.name} — ${user.role}`;
   setPageView(elements, AUTH_VIEW_AUTHENTICATED);
   navigation?.show("scan");
-  void uploadPanel?.refresh();
+  void uploadPanel?.refresh({ followPending: true });
   window.requestAnimationFrame(() => {
     document.getElementById("startBtn")?.focus();
   });

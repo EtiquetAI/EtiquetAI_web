@@ -34,12 +34,42 @@ After login the app renders a single workspace with a three-tab navigation bar. 
 | Tab | Panel | Behaviour |
 | --- | --- | --- |
 | Escanear QR | `#appPage` scanner | Camera preview, live detection, and the recent scans list. Starting a scan stops whatever else was running. |
-| Ingresar imagen | upload panel | Drag-and-drop or file picker with an inline preview. Uploads via `POST /api/v1/images` and refreshes the results table on success. |
-| Resultados | results table | Reads `GET /api/v1/reads` and renders `#`, `Fecha`, `Contenido`, `Origen`, and `Archivo`. |
+| Ingresar imagen | upload panel | Drag-and-drop or file picker with an inline preview. Uploads via `POST /api/v1/images`, then follows each image through the OCR and shows where it is (see *OCR progress* below). |
+| Resultados | results table | Reads `GET /api/v1/reads` and renders `#`, `Fecha`, `Estado`, `Destino`, `Código postal`, `Destinatario`, `Dirección`, `Tracking`, `Contenido`, `Origen`, and `Archivo`. A `Detalle` button opens the reasons, confidence, QR and raw OCR text of a reading. |
 
 The results table is not persisted in the browser. Every row comes from the `label_reads` table through the API, scoped to the logged-in user, so reloads and other devices see the same data. The origin column shows `Cámara` or `Imagen` depending on how the value was captured, and a failed refresh leaves the current rows in place while showing an error status.
 
-`Descargar Excel` builds the `.xlsx` file in the browser with no third-party spreadsheet dependency and triggers a download. `Actualizar` re-fetches the current page.
+`Descargar Excel` builds the `.xlsx` file in the browser with no third-party spreadsheet dependency and triggers a download. It carries the same columns as the table plus the reasons (`Motivos`) and the decoded QR. `Actualizar` re-fetches the current page.
+
+### OCR progress
+
+An upload only says the image was stored. What happens next is reported by the API (`ocr_status` on `GET /api/v1/images`) and the panel shows it under each image:
+
+| `ocr_status` | Shown as | Meaning |
+| --- | --- | --- |
+| `queued` | Esperando OCR… | Handed to the vision worker; no result yet. |
+| `done` + `validation_status` `OK` / `REVIEW` / `REJECTED` | Leída / Leída · revisar / Sin etiqueta legible | The worker answered. |
+| `failed` | El OCR falló | The worker reported an error (its message is the tooltip). |
+| `not_queued` | No se pudo encolar | The broker refused the job; the image is stored but will not be read. |
+| `disabled` | OCR desactivado | The backend runs without a queue. |
+| `unknown` or absent | nothing | Images stored before this was tracked, or an API that predates it. |
+
+`OcrWatcher` (`src/ocr/OcrWatcher.ts`) polls `GET /api/v1/images?ids=…` and `GET /api/v1/reads?image_ids=…` every 2.5 s until every image of the batch has finished, giving up after 15–120 s depending on the batch size. It stops following an image the moment its state is final, so a failure no longer waits for a timeout. Images still `queued` when the page loads are followed again. Images are fetched before reads on purpose: the backend stores a result's fields before it marks the image done, so the reads fetched afterwards are never older than the state that finished the image. Against an API without `ocr_status` it falls back to the previous rule (finished once a read with label data appears).
+
+### Verdict of a reading
+
+Each row of the results table carries the vision service's verdict, shown by `src/results/StatusBadge.ts`:
+
+| `validation_status` | Badge | Meaning |
+| --- | --- | --- |
+| `OK` | Correcta | Required fields read with good confidence and no conflict with the QR. |
+| `REVIEW` | Revisar | Something is doubtful and a person should confirm it. |
+| `REJECTED` | Rechazada | No shipping label could be read in the image. |
+| absent | — | Camera scans, which no OCR has judged. |
+
+`Detalle` explains the verdict. Issue codes are translated in `src/results/status.ts` (`describeIssue`); a code the frontend does not know yet is shown as it arrives, so a new backend code never hides information. Confidence is graded high (≥ 80 %), medium (≥ 50 %) or low.
+
+Every field added with version 1 of the API contract is optional in `src/api/reads.ts` and `src/api/images.ts`, so the frontend keeps working against a backend that has not been updated.
 
 The scanner panel also keeps the optional reporting adapter: when `Enviar cada lectura` is enabled under `Configurar envío`, each detected code is additionally posted to the `Backend URL` entered there through the browser `fetch` API. This is independent of the results table, which always reads from `GET /api/v1/reads`.
 
@@ -68,10 +98,15 @@ On Linux CI, use `npx playwright install --with-deps chromium` when system brows
 dependencies are not already installed. For interactive debugging use
 `npm run test:e2e:ui`. View the last HTML report with `npm run test:e2e:report`.
 
-The same 20 application scenarios run in desktop Chrome and mobile Chromium emulation:
+The same 36 application scenarios run in desktop Chrome and mobile Chromium emulation:
 registration/login errors and success, session restore/refresh/logout, navigation,
-image preview/upload, file validation, delayed OCR result polling, result refresh
-failures, Excel downloads, and single/bulk deletion (including cancellation/errors).
+image preview/upload, file validation, delayed OCR result polling, OCR progress
+(queued, done, failed, not queued, rejected, resumed after a reload), the verdict
+badge and expandable detail of a reading, result refresh failures, Excel downloads
+(including verdict and reasons), and single/bulk deletion (including
+cancellation/errors). `tests/e2e/vision-vocabulary.spec.ts` covers the pure
+vocabulary (status parsing, issue messages, confidence grading, snapshot merging)
+without opening a page.
 Two additional negative guard scenarios deliberately trigger fixture failures:
 Playwright marks them as expected failures and rejects an unexpected pass.
 

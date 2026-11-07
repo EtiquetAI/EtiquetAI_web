@@ -330,6 +330,9 @@
           <button class="app-nav-tab" type="button" data-app-tab="results">
             <span class="app-nav-dot" aria-hidden="true"></span>Resultados
           </button>
+          <button class="app-nav-tab" type="button" data-app-tab="metrics">
+            <span class="app-nav-dot" aria-hidden="true"></span>Métricas
+          </button>
         </nav>
 
         <div class="app-view" data-app-panel="scan">
@@ -383,9 +386,9 @@
 
             <div class="upload-body">
               <label id="uploadDropzone" class="upload-dropzone" for="imageInput">
-                <input id="imageInput" name="image" type="file" accept="image/jpeg,image/png" multiple hidden />
-                <span class="upload-dropzone-title">Elegí imágenes o arrastralas acá</span>
-                <span class="upload-dropzone-hint">JPG o PNG, hasta 10 MB cada una. Sus datos aparecen en la tabla de resultados.</span>
+                <input id="imageInput" name="image" type="file" accept="image/jpeg,image/png,image/webp,.zip,application/zip" multiple hidden />
+                <span class="upload-dropzone-title">Elegí imágenes o un .zip, o arrastralos acá</span>
+                <span class="upload-dropzone-hint">JPG, PNG o WebP de hasta 10 MB cada una, o un .zip con varias. Sus datos aparecen en la tabla de resultados.</span>
               </label>
               <figure id="uploadPreview" class="upload-preview" hidden>
                 <img id="uploadPreviewImage" alt="Vista previa de la imagen seleccionada" />
@@ -394,6 +397,11 @@
             </div>
 
             <div id="uploadStatus" class="upload-status" role="status" aria-live="polite"></div>
+            <div id="uploadBatchReport" class="upload-report" aria-live="polite"></div>
+            <div class="upload-progress-row">
+              <p id="uploadProgress" class="upload-progress" role="status" aria-live="polite" hidden></p>
+              <button id="retryFailedButton" class="button button-secondary button-compact" type="button" hidden>Reintentar fallidas</button>
+            </div>
             <ul id="uploadedList" class="uploaded-list"></ul>
           </section>
         </div>
@@ -406,9 +414,31 @@
                 <span id="resultsCount" class="panel-state">0 etiquetas</span>
                 <button id="refreshResultsButton" class="button button-secondary button-compact" type="button">Actualizar</button>
                 <button id="exportXlsxButton" class="button button-primary button-compact" type="button" disabled>Descargar Excel</button>
+                <button id="exportCsvButton" class="button button-secondary button-compact" type="button">CSV</button>
+                <button id="exportJsonButton" class="button button-secondary button-compact" type="button">JSON</button>
                 <button id="clearResultsButton" class="button button-danger button-compact" type="button" disabled>Borrar resultados</button>
               </div>
             </div>
+
+            <form id="resultsFilters" class="results-filters" role="search" aria-label="Filtrar resultados" onsubmit="return false">
+              <label class="filter-field"><span>Estado</span>
+                <select id="resultsFilterValidation">
+                  <option value="">Todos</option><option value="OK">Correcta</option><option value="REVIEW">Revisar</option><option value="REJECTED">Rechazada</option>
+                </select>
+              </label>
+              <label class="filter-field"><span>Revisión</span>
+                <select id="resultsFilterReview">
+                  <option value="">Todas</option><option value="pending">Sin revisar</option><option value="confirmed">Confirmada</option><option value="corrected">Corregida</option>
+                </select>
+              </label>
+              <label class="filter-field"><span>Lote</span>
+                <select id="resultsFilterBatch"><option value="">Todos los lotes</option></select>
+              </label>
+              <label class="filter-field filter-search"><span>Buscar</span>
+                <input id="resultsFilterQuery" type="search" placeholder="Nombre, tracking, dirección…" autocomplete="off" maxlength="100" />
+              </label>
+              <button id="resultsFilterClear" class="text-button" type="button" hidden>Quitar filtros</button>
+            </form>
 
             <div class="table-scroll">
               <table class="results-table">
@@ -417,9 +447,12 @@
                   <tr>
                     <th scope="col" class="col-index">#</th>
                     <th scope="col" class="col-date">Fecha</th>
+                    <th scope="col" class="col-status">Estado</th>
+                    <th scope="col" class="col-review">Revisión</th>
                     <th scope="col" class="col-destino">Destino</th>
                     <th scope="col" class="col-cp">Código postal</th>
                     <th scope="col" class="col-destinatario">Destinatario</th>
+                    <th scope="col" class="col-direccion">Dirección</th>
                     <th scope="col" class="col-tracking">Tracking</th>
                     <th scope="col" class="col-content">Contenido</th>
                     <th scope="col" class="col-source">Origen</th>
@@ -432,6 +465,24 @@
             </div>
 
             <p id="resultsTableStatus" class="table-status" role="status" aria-live="polite"></p>
+          </section>
+        </div>
+
+        <div class="app-view" data-app-panel="metrics" hidden>
+          <section class="metrics-panel" aria-labelledby="metricsTitle">
+            <div class="panel-heading">
+              <div><span class="panel-label">QUALITY</span><h2 id="metricsTitle">Métricas del procesamiento</h2></div>
+              <div class="table-actions">
+                <label class="filter-field"><span>Período</span>
+                  <select id="metricsPeriod">
+                    <option value="">Todo el historial</option><option value="1">Últimas 24 horas</option><option value="7">Últimos 7 días</option><option value="30">Últimos 30 días</option>
+                  </select>
+                </label>
+                <button id="refreshMetricsButton" class="button button-secondary button-compact" type="button">Actualizar</button>
+              </div>
+            </div>
+            <p id="metricsStatus" class="table-status" role="status" aria-live="polite"></p>
+            <div id="metricsBody" class="metrics-body"></div>
           </section>
         </div>
       </div>
