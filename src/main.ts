@@ -12,8 +12,11 @@ import { clearSession, getAccessToken, saveSession } from "./auth/session.js";
 import { restoreUserSession } from "./auth/restore.js";
 import { UploadPanel } from "./upload/UploadPanel.js";
 import { ResultsTable } from "./results/ResultsTable.js";
+import { OcrWatcher } from "./ocr/OcrWatcher.js";
 import { AppNavigation } from "./nav/AppNavigation.js";
 import { readsApi } from "./api/reads.js";
+import { MetricsPanel } from "./metrics/MetricsPanel.js";
+import { clearImageCache } from "./results/ImageCache.js";
 
 const AUTH_VIEW_LANDING = "landing" as const;
 const AUTH_VIEW_LOGIN = "login" as const;
@@ -68,8 +71,12 @@ interface ValidationError {
 let appInstance: App | null = null;
 let uploadPanel: UploadPanel | null = null;
 let resultsTable: ResultsTable | null = null;
+let ocrWatcher: OcrWatcher | null = null;
 let navigation: AppNavigation | null = null;
+let metricsPanel: MetricsPanel | null = null;
 let currentUser: User | null = null;
+/** Whose data the panels currently hold, so a different account starts from a clean slate. */
+let shownUserId: string | null = null;
 let currentView: ApplicationView = AUTH_VIEW_LANDING;
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -296,6 +303,8 @@ async function handleLogout(elements: PageElements): Promise<void> {
     // Local session cleanup must not depend on the logout request succeeding.
   } finally {
     clearSession();
+    resetAccountState();
+    shownUserId = null;
     appInstance?.stop();
     showLanding(elements);
     elements.loginForm.reset();
@@ -306,14 +315,38 @@ async function handleLogout(elements: PageElements): Promise<void> {
   }
 }
 
+/** Empties every panel that holds data of the account that was signed in. */
+function resetAccountState(): void {
+  ocrWatcher?.cancel();
+  resultsTable?.reset();
+  uploadPanel?.reset();
+  metricsPanel?.reset();
+  clearImageCache();
+}
+
 function showAuthenticatedApp(user: User, elements: PageElements): void {
   if (appInstance === null) {
     const video = document.getElementById("video") as HTMLVideoElement;
     const overlay = document.getElementById("overlay") as HTMLCanvasElement;
     const scanner = new BrowserCameraScanner(video, overlay);
-    const storage = new LocalStorageQRCodeStorage();
+    const storage = new LocalStorageQRCodeStorage(() => currentUser?.id ?? null);
+    storage.purgeLegacy();
 
-    resultsTable = new ResultsTable({ getAccessToken });
+    ocrWatcher = new OcrWatcher({
+      getAccessToken,
+      handlers: {
+        onImages: (images) => uploadPanel?.updateImages(images),
+        onReads: (reads) => resultsTable?.mergeReads(reads),
+        onError: (message) => resultsTable?.notify(message, "error"),
+        onTimeout: (pending) =>
+          resultsTable?.notify(
+            `${pending} imagen(es) siguen esperando al OCR. Cuando quieras, usá "Actualizar estado" en Ingresar imagen o "Actualizar" acá.`,
+            "neutral",
+          ),
+      },
+    });
+
+    resultsTable = new ResultsTable({ getAccessToken, onCleared: () => ocrWatcher?.cancel() });
 
     appInstance = new App(scanner, storage, async (code) => {
       const accessToken = getAccessToken();
@@ -327,10 +360,17 @@ function showAuthenticatedApp(user: User, elements: PageElements): void {
       getAccessToken,
       onUploaded: (images) => {
         void resultsTable?.refresh();
-        // Follow the batch until its OCR results have reached the table.
-        void resultsTable?.watchImageResults(images.map((image) => image.id));
+        // Follow the batch until the OCR has finished with every image.
+        void ocrWatcher?.watch(images.map((image) => image.id));
       },
+      onPendingImages: (imageIDs) => {
+        void ocrWatcher?.watch(imageIDs);
+      },
+      onBatches: (batches) => resultsTable?.setBatches(batches),
+      onPendingCount: (count) => resultsTable?.setPendingCount(count),
     });
+
+    metricsPanel = new MetricsPanel({ getAccessToken });
 
     navigation = new AppNavigation((view) => {
       if (view !== "scan") {
@@ -339,14 +379,23 @@ function showAuthenticatedApp(user: User, elements: PageElements): void {
       if (view === "results") {
         void resultsTable?.refresh();
       }
+      if (view === "metrics") {
+        void metricsPanel?.refresh();
+      }
     });
   }
 
   currentUser = user;
+  if (shownUserId !== user.id) {
+    // A different account: nothing from the previous one may stay on screen.
+    resetAccountState();
+    shownUserId = user.id;
+  }
+  void appInstance?.refreshList();
   elements.currentUser.textContent = `${user.name} — ${user.role}`;
   setPageView(elements, AUTH_VIEW_AUTHENTICATED);
   navigation?.show("scan");
-  void uploadPanel?.refresh();
+  void uploadPanel?.refresh({ followPending: true });
   window.requestAnimationFrame(() => {
     document.getElementById("startBtn")?.focus();
   });

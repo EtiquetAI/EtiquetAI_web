@@ -36,7 +36,7 @@ test("uploads an image, previews it, and polls until OCR fields appear", async (
 });
 
 for (const invalid of [
-  { name: "note.txt", mimeType: "text/plain", buffer: Buffer.from("not an image"), message: "Solo se aceptan imágenes JPG o PNG." },
+  { name: "note.txt", mimeType: "text/plain", buffer: Buffer.from("not an image"), message: "Solo se aceptan imágenes JPG, PNG o WebP." },
   { name: "empty.png", mimeType: "image/png", buffer: Buffer.alloc(0), message: "El archivo está vacío." },
   { name: "large.png", mimeType: "image/png", buffer: Buffer.alloc(10 * 1024 * 1024 + 1), message: "La imagen supera el límite de 10 MB." },
 ]) {
