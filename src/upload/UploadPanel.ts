@@ -59,6 +59,10 @@ export class UploadPanel {
   private readonly retryAllButton: HTMLButtonElement;
   private readonly onBatches?: (batches: UploadBatchOption[]) => void;
   private retrying = false;
+  /** Bumped when the account changes, so work started for the previous one is dropped. */
+  private generation = 0;
+  private readonly onPendingCount?: (count: number) => void;
+  private readonly refreshButton: HTMLElement | null;
   private readonly getAccessToken: () => string | null;
   private readonly onUploaded?: (images: UploadedImage[]) => void;
   private readonly onPendingImages?: (imageIDs: string[]) => void;
@@ -72,8 +76,11 @@ export class UploadPanel {
     onUploaded?: (images: UploadedImage[]) => void;
     onPendingImages?: (imageIDs: string[]) => void;
     onBatches?: (batches: UploadBatchOption[]) => void;
+    /** Told how many images are still waiting for the OCR whenever that changes. */
+    onPendingCount?: (count: number) => void;
   }) {
     this.onBatches = options.onBatches;
+    this.onPendingCount = options.onPendingCount;
     this.getAccessToken = options.getAccessToken;
     this.onUploaded = options.onUploaded;
     this.onPendingImages = options.onPendingImages;
@@ -89,6 +96,8 @@ export class UploadPanel {
     this.report = this.require("uploadBatchReport");
     this.retryAllButton = this.require("retryFailedButton") as HTMLButtonElement;
     this.retryAllButton.addEventListener("click", () => void this.retryAll());
+    this.refreshButton = document.getElementById("refreshUploadsButton");
+    this.refreshButton?.addEventListener("click", () => void this.refresh({ followPending: true }));
 
     this.input.addEventListener("change", () => {
       const files = Array.from(this.input.files ?? []);
@@ -120,9 +129,12 @@ export class UploadPanel {
   async refresh(options: { followPending?: boolean } = {}): Promise<void> {
     const token = this.getAccessToken();
     if (!token) return;
+    const generation = this.generation;
 
     try {
-      this.setImages(await imagesApi.listImages(token));
+      const images = await imagesApi.listImages(token);
+      if (generation !== this.generation) return; // the account changed while this was on its way
+      this.setImages(images);
     } catch {
       this.setStatus("No se pudo consultar las imágenes guardadas.", "error");
       return;
@@ -141,7 +153,29 @@ export class UploadPanel {
     const known = new Map(this.images.map((image) => [image.id, image]));
     const merged = this.images.map((image) => mergeImage(image, updates.find((update) => update.id === image.id) ?? image));
     const added = updates.filter((update) => !known.has(update.id));
-    this.images = [...added, ...merged];
+    const next = [...added, ...merged];
+    // Every poll brings the same state again; redrawing it would also swallow a click on Reintentar.
+    if (JSON.stringify(next) === JSON.stringify(this.images)) return;
+    this.images = next;
+    this.renderList();
+  }
+
+  /** Forgets everything that belongs to the previous account. */
+  reset(): void {
+    this.generation++;
+    this.images = [];
+    this.uploadQueue.length = 0;
+    this.processing = false;
+    this.retrying = false;
+    this.rejectedCount = 0;
+    this.report.replaceChildren();
+    this.preview.hidden = true;
+    if (this.previewImage.dataset.objectUrl) {
+      URL.revokeObjectURL(this.previewImage.dataset.objectUrl);
+      delete this.previewImage.dataset.objectUrl;
+    }
+    this.previewImage.removeAttribute("src");
+    this.setStatus("", "neutral");
     this.renderList();
   }
 
@@ -158,7 +192,10 @@ export class UploadPanel {
 
   private setImages(incoming: UploadedImage[]): void {
     const previous = new Map(this.images.map((image) => [image.id, image]));
-    this.images = incoming.map((image) => mergeImage(previous.get(image.id), image));
+    const next = incoming.map((image) => mergeImage(previous.get(image.id), image));
+    // Asking again for the same state must not redraw (and swallow a click on Reintentar).
+    if (this.images.length > 0 && JSON.stringify(next) === JSON.stringify(this.images)) return;
+    this.images = next;
     this.render();
   }
 
@@ -183,6 +220,7 @@ export class UploadPanel {
     }
 
     this.processing = true;
+    const generation = this.generation;
     let uploadedCount = 0;
     let failedCount = 0;
     const uploadedImages: UploadedImage[] = [];
@@ -191,7 +229,7 @@ export class UploadPanel {
     const selectionBatch = looseCount > 1 ? newBatchId() : "";
     this.report.replaceChildren();
     try {
-      while (this.uploadQueue.length > 0) {
+      while (this.uploadQueue.length > 0 && generation === this.generation) {
         const file = this.uploadQueue.shift();
         if (!file) continue;
         const isZip = imagesApi.isZipFile(file);
@@ -226,6 +264,7 @@ export class UploadPanel {
       this.processing = false;
     }
 
+    if (generation !== this.generation) return; // signed out (or switched account) mid-upload
     failedCount += this.rejectedCount;
     this.rejectedCount = 0;
 
@@ -309,6 +348,8 @@ export class UploadPanel {
     this.progress.hidden = parts.length === 0;
     this.retryAllButton.hidden = failed === 0;
     this.retryAllButton.disabled = this.retrying;
+    if (this.refreshButton) this.refreshButton.hidden = waiting === 0 && failed === 0;
+    this.onPendingCount?.(waiting);
   }
 
   private showPreview(file: File): void {

@@ -7,6 +7,8 @@ import { createStatusBadge } from "./StatusBadge.js";
 import { REVIEW_PRESENTATION, STATUS_PRESENTATION, describeIssue } from "./status.js";
 
 const QUERY_DEBOUNCE_MS = 300;
+const DEFAULT_PAGE_SIZE = 20;
+const REFRESH_DEBOUNCE_MS = 400;
 
 export interface BatchOption {
   id: string;
@@ -44,6 +46,25 @@ export class ResultsTable {
   private readonly expanded = new Set<string>();
   private loading = false;
   private mutating = false;
+  /** A redraw held back because the person was typing or in the middle of a click. */
+  private renderDeferred = false;
+  private pointerDown = false;
+  private pendingCount = 0;
+  private pendingNotice: HTMLElement | null = null;
+  /** Bumped when the account changes, so an answer meant for the previous one is dropped. */
+  private generation = 0;
+  private page = 1;
+  private pageSize = DEFAULT_PAGE_SIZE;
+  /** How many reads match the filters in all, which is more than the page on screen. */
+  private total = 0;
+  private refreshQueued = false;
+  private refreshTimer: number | undefined;
+  private readonly pager: HTMLElement;
+  private readonly pagerInfo: HTMLElement;
+  private readonly pagerLabel: HTMLElement;
+  private readonly pageSizeSelect: HTMLSelectElement;
+  private readonly prevButton: HTMLButtonElement;
+  private readonly nextButton: HTMLButtonElement;
 
   constructor(options: { getAccessToken: () => string | null; onCleared?: () => void }) {
     this.getAccessToken = options.getAccessToken;
@@ -62,9 +83,38 @@ export class ResultsTable {
     this.batchFilter = this.require("resultsFilterBatch") as HTMLSelectElement;
     this.queryFilter = this.require("resultsFilterQuery") as HTMLInputElement;
     this.clearFilters = this.require("resultsFilterClear") as HTMLButtonElement;
+    this.pendingNotice = document.getElementById("resultsPending");
+    this.pager = this.require("resultsPager");
+    this.pagerInfo = this.require("resultsPagerInfo");
+    this.pagerLabel = this.require("resultsPageLabel");
+    this.pageSizeSelect = this.require("resultsPageSize") as HTMLSelectElement;
+    this.prevButton = this.require("resultsPrev") as HTMLButtonElement;
+    this.nextButton = this.require("resultsNext") as HTMLButtonElement;
+    this.pageSizeSelect.value = String(this.pageSize);
+    this.prevButton.addEventListener("click", () => this.goToPage(this.page - 1));
+    this.nextButton.addEventListener("click", () => this.goToPage(this.page + 1));
+    this.pageSizeSelect.addEventListener("change", () => {
+      this.pageSize = Number(this.pageSizeSelect.value) || DEFAULT_PAGE_SIZE;
+      this.page = 1;
+      void this.refresh();
+    });
+
+    // Background updates must never rebuild the table under the person's hands: a click is a
+    // press and a release on the same element, and a form is worthless if it is wiped while typed in.
+    this.body.addEventListener("pointerdown", () => {
+      this.pointerDown = true;
+    });
+    const release = (): void => {
+      if (!this.pointerDown) return;
+      this.pointerDown = false;
+      window.setTimeout(() => this.flushDeferred(), 0);
+    };
+    document.addEventListener("pointerup", release);
+    document.addEventListener("pointercancel", release);
+    this.body.addEventListener("focusout", () => window.setTimeout(() => this.flushDeferred(), 0));
 
     this.refreshButton.addEventListener("click", () => void this.refresh());
-    this.exportButton.addEventListener("click", () => this.export());
+    this.exportButton.addEventListener("click", () => void this.export());
     this.clearButton.addEventListener("click", () => void this.clear());
     this.csvButton.addEventListener("click", () => void this.exportFromServer("csv"));
     this.jsonButton.addEventListener("click", () => void this.exportFromServer("json"));
@@ -105,27 +155,84 @@ export class ResultsTable {
       ...(this.queryFilter.value.trim() ? { query: this.queryFilter.value.trim() } : {}),
     };
     this.clearFilters.hidden = !isFilterActive(this.filter);
+    this.page = 1;
     void this.refresh();
   }
 
-  async refresh(): Promise<void> {
+  private goToPage(page: number): void {
+    const last = Math.max(1, Math.ceil(this.total / this.pageSize));
+    const target = Math.min(Math.max(page, 1), last);
+    if (target === this.page) return;
+    this.page = target;
+    void this.refresh();
+  }
+
+  private lastPage(): number {
+    return Math.max(1, Math.ceil(this.total / this.pageSize));
+  }
+
+  /** First row number of the current page, so rows are numbered across pages and not from 1 on each. */
+  private firstRowNumber(): number {
+    return (this.page - 1) * this.pageSize + 1;
+  }
+
+  private updatePager(): void {
+    this.pager.hidden = this.total === 0;
+    if (this.total === 0) return;
+    const from = this.firstRowNumber();
+    const to = Math.min(from + this.rows.length - 1, this.total);
+    this.pagerInfo.textContent = `Mostrando ${from}–${Math.max(to, from)} de ${this.total}`;
+    this.pagerLabel.textContent = `Página ${this.page} de ${this.lastPage()}`;
+    this.prevButton.disabled = this.page <= 1;
+    this.nextButton.disabled = this.page >= this.lastPage();
+  }
+
+  /** Asks the server for the current page soon, folding several requests into one. */
+  private refreshSoon(): void {
+    window.clearTimeout(this.refreshTimer);
+    this.refreshTimer = window.setTimeout(() => {
+      if (this.isBusyWithUser()) {
+        this.refreshQueued = true;
+        return;
+      }
+      void this.refresh({ quiet: true });
+    }, REFRESH_DEBOUNCE_MS);
+  }
+
+  async refresh(options: { quiet?: boolean } = {}): Promise<void> {
     const token = this.getAccessToken();
-    if (token === null || this.loading) {
+    if (token === null) {
+      return;
+    }
+    if (this.loading) {
+      this.refreshQueued = true;
       return;
     }
 
     this.loading = true;
-    this.refreshButton.disabled = true;
-    this.setStatus("Consultando la base de datos…", "neutral");
+    if (!options.quiet) {
+      this.refreshButton.disabled = true;
+      this.setStatus("Consultando la base de datos…", "neutral");
+    }
+    const generation = this.generation;
 
     try {
-      this.rows = await readsApi.listReads(token, this.filter);
+      let result = await readsApi.listReadsPage(token, this.filter, { limit: this.pageSize, offset: (this.page - 1) * this.pageSize });
+      if (generation !== this.generation) return; // the account changed while this was on its way
+      if (result.reads.length === 0 && result.total > 0 && this.page > 1) {
+        // The page the person was on no longer exists (rows were deleted): go to the last one.
+        this.page = Math.max(1, Math.ceil(result.total / this.pageSize));
+        result = await readsApi.listReadsPage(token, this.filter, { limit: this.pageSize, offset: (this.page - 1) * this.pageSize });
+        if (generation !== this.generation) return;
+      }
+      this.rows = result.reads;
+      this.total = result.total;
       this.render();
       if (this.rows.length === 0 && isFilterActive(this.filter)) {
         this.setStatus("Ninguna lectura coincide con los filtros.", "neutral");
       } else if (this.rows.length === 0) {
         this.setStatus("Todavía no hay etiquetas guardadas. Escaneá un código o subí una imagen.", "neutral");
-      } else {
+      } else if (!options.quiet) {
         this.setStatus("", "neutral");
       }
     } catch (error) {
@@ -133,6 +240,10 @@ export class ResultsTable {
     } finally {
       this.loading = false;
       this.refreshButton.disabled = this.mutating;
+      if (this.refreshQueued && generation === this.generation) {
+        this.refreshQueued = false;
+        this.refreshSoon();
+      }
     }
   }
 
@@ -140,15 +251,98 @@ export class ResultsTable {
   mergeReads(updates: LabelRead[]): void {
     if (updates.length === 0) return;
 
-    const byID = new Map(this.rows.map((row) => [row.id, row]));
-    for (const update of updates) {
-      // A read that does not meet the active filters stays out of the table.
-      if (matchesFilter(update, this.filter)) byID.set(update.id, update);
-      else byID.delete(update.id);
+    // A lot cannot be mirrored in the browser (a read does not carry its lot): ask the server instead.
+    if (this.filter.batchId) {
+      this.refreshSoon();
+      return;
     }
-    this.rows = Array.from(byID.values()).sort(
-      (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at),
+
+    const known = new Set(this.rows.map((row) => row.id));
+    const matching = updates.filter((update) => matchesFilter(update, this.filter));
+    const arrivals = matching.filter((update) => !known.has(update.id));
+    const departed = updates.filter((update) => !matchesFilter(update, this.filter) && known.has(update.id));
+
+    const byID = new Map(this.rows.map((row) => [row.id, row]));
+    for (const update of matching) if (known.has(update.id)) byID.set(update.id, update);
+    for (const update of departed) byID.delete(update.id);
+
+    let next = Array.from(byID.values());
+    if (this.page === 1) {
+      // The newest reads belong on the first page: they push the oldest one off it.
+      for (const arrival of arrivals) byID.set(arrival.id, arrival);
+      next = Array.from(byID.values()).sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)).slice(0, this.pageSize);
+    }
+    const added = arrivals.length;
+    const totalChanged = added > 0 || departed.length > 0;
+    if (totalChanged) this.total = Math.max(0, this.total + added - departed.length);
+
+    // The watcher brings the same reads again on every poll. Nothing to draw means nothing to disturb.
+    if (sameRows(this.rows, next)) {
+      if (totalChanged) this.updatePager();
+      return;
+    }
+    this.rows = next;
+    if (this.isBusyWithUser()) {
+      this.renderDeferred = true;
+      return;
+    }
+    this.render();
+  }
+
+  /** True while redrawing would cost the person something: a pending click, a dirty form, a focused field. */
+  private isBusyWithUser(): boolean {
+    if (this.pointerDown || this.body.querySelector(".review-form.is-dirty") !== null) return true;
+    const active = document.activeElement;
+    return (
+      active !== null &&
+      this.body.contains(active) &&
+      (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement)
     );
+  }
+
+  private flushDeferred(): void {
+    if (this.isBusyWithUser()) return;
+    if (this.renderDeferred) this.render();
+    if (this.refreshQueued && !this.loading) {
+      this.refreshQueued = false;
+      void this.refresh({ quiet: true });
+    }
+  }
+
+  /** How many uploaded images the OCR has not finished yet, so the table can say why rows are still missing. */
+  setPendingCount(count: number): void {
+    this.pendingCount = count;
+    if (this.pendingNotice === null) return;
+    this.pendingNotice.hidden = count === 0;
+    this.pendingNotice.textContent =
+      count === 0
+        ? ""
+        : `${count} ${count === 1 ? "imagen todavía se está procesando" : "imágenes todavía se están procesando"}: sus resultados aparecen acá a medida que se leen.`;
+  }
+
+  /** Forgets everything that belongs to the previous account. */
+  reset(): void {
+    this.generation++;
+    this.rows = [];
+    this.total = 0;
+    this.page = 1;
+    this.pageSize = DEFAULT_PAGE_SIZE;
+    this.pageSizeSelect.value = String(DEFAULT_PAGE_SIZE);
+    this.refreshQueued = false;
+    window.clearTimeout(this.refreshTimer);
+    this.expanded.clear();
+    this.filter = {};
+    this.validationFilter.value = "";
+    this.reviewFilter.value = "";
+    this.queryFilter.value = "";
+    this.setBatches([]);
+    this.clearFilters.hidden = true;
+    this.loading = false;
+    this.mutating = false;
+    this.exporting = false;
+    this.pointerDown = false;
+    this.setStatus("", "neutral");
+    this.setPendingCount(0);
     this.render();
   }
 
@@ -157,10 +351,12 @@ export class ResultsTable {
   }
 
   private render(): void {
+    this.updatePager();
+    this.renderDeferred = false;
     this.body.replaceChildren();
     this.count.textContent = `${this.rows.length} ${this.rows.length === 1 ? "etiqueta" : "etiquetas"}`;
     this.refreshButton.disabled = this.loading || this.mutating;
-    this.exportButton.disabled = this.rows.length === 0 || this.mutating;
+    this.exportButton.disabled = this.rows.length === 0 || this.mutating || this.exporting;
     this.csvButton.disabled = this.exporting || this.mutating;
     this.jsonButton.disabled = this.exporting || this.mutating;
     this.clearButton.disabled = this.rows.length === 0 || this.mutating;
@@ -219,7 +415,7 @@ export class ResultsTable {
   private renderRow(row: LabelRead, index: number): HTMLTableRowElement {
     const tr = document.createElement("tr");
 
-    tr.appendChild(cell("col-index", String(index + 1)));
+    tr.appendChild(cell("col-index", String(this.firstRowNumber() + index)));
     tr.appendChild(cell("col-date", safeDate(row.created_at)));
 
     const statusCell = document.createElement("td");
@@ -258,7 +454,7 @@ export class ResultsTable {
     removeButton.type = "button";
     removeButton.className = "text-button result-delete-button";
     removeButton.textContent = "Borrar";
-    removeButton.setAttribute("aria-label", `Borrar resultado ${index + 1}`);
+    removeButton.setAttribute("aria-label", `Borrar resultado ${this.firstRowNumber() + index}`);
     removeButton.disabled = this.mutating;
     removeButton.addEventListener("click", () => void this.remove(row));
     actions.appendChild(removeButton);
@@ -296,7 +492,7 @@ export class ResultsTable {
     button.className = "text-button result-detail-button";
     button.textContent = isOpen ? "Ocultar" : "Detalle";
     button.setAttribute("aria-expanded", String(isOpen));
-    button.setAttribute("aria-label", `${isOpen ? "Ocultar" : "Ver"} detalle del resultado ${index + 1}`);
+    button.setAttribute("aria-label", `${isOpen ? "Ocultar" : "Ver"} detalle del resultado ${this.firstRowNumber() + index}`);
     button.addEventListener("click", () => this.toggleDetail(row));
     return button;
   }
@@ -316,9 +512,11 @@ export class ResultsTable {
     try {
       await readsApi.deleteRead(row.id, token);
       this.rows = this.rows.filter((item) => item.id !== row.id);
+      this.total = Math.max(0, this.total - 1);
       this.expanded.delete(row.id);
       this.render();
       this.setStatus("Resultado borrado.", "neutral");
+      this.refreshSoon(); // refill the page and correct the total
     } catch (error) {
       this.setStatus(error instanceof Error ? error.message : "No se pudo borrar el resultado.", "error");
     } finally {
@@ -330,7 +528,7 @@ export class ResultsTable {
   private async clear(): Promise<void> {
     const token = this.getAccessToken();
     if (!token || this.mutating || this.rows.length === 0) return;
-    const confirmed = window.confirm(`¿Borrar los ${this.rows.length} resultados guardados? Esta acción no se puede deshacer.`);
+    const confirmed = window.confirm(`¿Borrar los ${this.total} resultados guardados? Esta acción no se puede deshacer.`);
     if (!confirmed) return;
 
     this.onCleared?.();
@@ -339,6 +537,8 @@ export class ResultsTable {
     try {
       await readsApi.deleteAllReads(token);
       this.rows = [];
+      this.total = 0;
+      this.page = 1;
       this.expanded.clear();
       this.render();
       this.setStatus("Se borraron todos los resultados guardados.", "neutral");
@@ -350,21 +550,26 @@ export class ResultsTable {
     }
   }
 
-  private export(): void {
-    if (this.rows.length === 0) {
+  /** Excel holds every read that matches the filters, not only the page on screen. */
+  private async export(): Promise<void> {
+    const token = this.getAccessToken();
+    if (this.rows.length === 0 || token === null || this.exporting) {
       return;
     }
 
+    this.exporting = true;
+    this.render();
+    this.setStatus("Preparando el archivo…", "neutral");
     try {
-      const bytes = sheetBytes({
-        name: "Etiquetas",
-        columns: exportColumns(),
-        rows: this.rows,
-      });
+      const all = expandLabels(await readsApi.listAllReads(token, this.filter));
+      const bytes = sheetBytes({ name: "Etiquetas", columns: exportColumns(), rows: all });
       downloadWorkbook(`etiquetas-${localStamp()}.xlsx`, bytes);
-      this.setStatus(`Archivo generado con ${this.rows.length} filas.`, "neutral");
+      this.setStatus(`Archivo generado con ${all.length} filas.`, "neutral");
     } catch {
       this.setStatus("No se pudo generar el archivo.", "error");
+    } finally {
+      this.exporting = false;
+      this.render();
     }
   }
 
@@ -380,6 +585,12 @@ export class ResultsTable {
     }
     return element;
   }
+}
+
+/** Whether two lists hold exactly the same reads in the same order. */
+export function sameRows(left: LabelRead[], right: LabelRead[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((row, index) => row === right[index] || JSON.stringify(row) === JSON.stringify(right[index]));
 }
 
 /** Mirrors the server's filters for a read that arrives by another road than the list. */
@@ -425,6 +636,40 @@ function safeDate(iso: string): string {
   return dateFormatter.format(date);
 }
 
+/**
+ * One row per label: a sheet of six labels is one read in the table but six lines in a file,
+ * otherwise an export would silently drop five of them. Extra rows are told apart by an id
+ * ending in `#<position>`.
+ */
+export function expandLabels(rows: LabelRead[]): LabelRead[] {
+  return rows.flatMap((row) => [
+    row,
+    ...(row.extra_labels ?? []).map(
+      (extra, index): LabelRead => ({
+        ...row,
+        id: `${row.id}#${index + 2}`,
+        destinatario: extra.destinatario,
+        direccion: extra.direccion,
+        codigo_postal: extra.codigo_postal,
+        destino: extra.destino,
+        tracking: extra.tracking,
+        validation_status: extra.validation_status,
+        issues: extra.issues,
+        review_status: "pending",
+        corrections: {},
+        extra_labels: [],
+      }),
+    ),
+  ]);
+}
+
+function labelPosition(row: LabelRead): string {
+  const total = row.label_count ?? 1;
+  if (total <= 1) return "";
+  const position = /#(\d+)$/.exec(row.id)?.[1] ?? "1";
+  return `${position} de ${total}`;
+}
+
 function exportColumns(): SheetColumn<LabelRead>[] {
   return [
     { header: "Fecha", width: 18, value: (row) => new Date(row.created_at) },
@@ -440,6 +685,7 @@ function exportColumns(): SheetColumn<LabelRead>[] {
     { header: "Contenido", width: 52, value: (row) => row.content },
     { header: "Origen", width: 14, value: (row) => (row.source === "image" ? "Imagen" : "Cámara") },
     { header: "Archivo", width: 30, value: (row) => row.filename ?? "" },
+    { header: "Etiqueta", width: 12, value: labelPosition },
   ];
 }
 

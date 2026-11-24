@@ -8,6 +8,7 @@ import {
   describeIssue,
   fieldLabel,
   formatConfidence,
+  issueField,
   orderedConfidence,
 } from "./status.js";
 
@@ -32,17 +33,19 @@ export function createResultDetail(row: LabelRead, options?: DetailOptions): HTM
 
   const extras = row.extra_labels ?? [];
   if ((row.label_count ?? 1) > 1) {
-    detail.appendChild(section(`Etiquetas en la imagen (${row.label_count})`, extraLabelList(row, extras)));
+    detail.appendChild(section(`Etiquetas en la imagen (${row.label_count})`, extraLabelList(row, extras), true));
   }
 
   const corrections = Object.entries(row.corrections ?? {});
   if (corrections.length > 0) {
-    detail.appendChild(section("Correcciones", correctionList(corrections as Array<[EditableField, { original: string | null; corrected: string | null }]>)));
+    detail.appendChild(
+      section("Correcciones", correctionList(corrections as Array<[EditableField, { original: string | null; corrected: string | null }]>), true),
+    );
   }
 
   const issues = row.issues ?? [];
   if (issues.length > 0) {
-    detail.appendChild(section("Motivos", issueList(issues)));
+    detail.appendChild(section("Motivos", issueList(issues, row.id, options !== undefined && row.source === "image")));
   } else if (row.validation_status === "OK") {
     detail.appendChild(section("Motivos", paragraph("Sin observaciones.")));
   }
@@ -94,9 +97,10 @@ function qrSummary(row: LabelRead): Array<[string, string]> {
   return entries;
 }
 
-function section(title: string, body: HTMLElement): HTMLElement {
+/** `wide` sections take the whole width of the detail instead of one narrow column of its grid. */
+function section(title: string, body: HTMLElement, wide = false): HTMLElement {
   const wrapper = document.createElement("section");
-  wrapper.className = "result-detail-section";
+  wrapper.className = wide ? "result-detail-section is-wide" : "result-detail-section";
   const heading = document.createElement("h4");
   heading.className = "result-detail-title";
   heading.textContent = title;
@@ -111,16 +115,42 @@ function paragraph(text: string): HTMLElement {
   return element;
 }
 
-function issueList(issues: string[]): HTMLElement {
+/**
+ * Each reason that is about one field takes the person to it: the reasons are what they
+ * have to act on, so a click on "Falta el tracking" puts the cursor in the tracking field.
+ */
+function issueList(issues: string[], rowId: string, linkToFields: boolean): HTMLElement {
   const list = document.createElement("ul");
   list.className = "result-detail-list";
   for (const code of issues) {
     const item = document.createElement("li");
-    item.textContent = describeIssue(code);
     item.dataset.issue = code;
+    const field = issueField(code);
+    if (linkToFields && field !== null) {
+      const link = document.createElement("button");
+      link.type = "button";
+      link.className = "issue-link";
+      link.textContent = describeIssue(code);
+      link.title = `Ir al campo ${fieldLabel(field)}`;
+      link.addEventListener("click", () => focusReviewField(rowId, field));
+      item.appendChild(link);
+    } else {
+      item.textContent = describeIssue(code);
+    }
     list.appendChild(item);
   }
   return list;
+}
+
+function focusReviewField(rowId: string, field: string): void {
+  const input = document.getElementById(`review-${rowId}-${field}`);
+  if (!(input instanceof HTMLInputElement)) return;
+  input.focus();
+  input.select();
+  input.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  const wrapper = input.closest(".review-field");
+  wrapper?.classList.add("is-flash");
+  window.setTimeout(() => wrapper?.classList.remove("is-flash"), 1500);
 }
 
 function confidenceList(entries: Array<[string, number]>): HTMLElement {
@@ -165,7 +195,7 @@ function rawText(text: string): HTMLElement {
 
 function reviewSection(row: LabelRead, options: DetailOptions): HTMLElement {
   const wrapper = document.createElement("section");
-  wrapper.className = "result-detail-section review-section";
+  wrapper.className = "result-detail-section review-section is-wide";
 
   const heading = document.createElement("h4");
   heading.className = "result-detail-title";

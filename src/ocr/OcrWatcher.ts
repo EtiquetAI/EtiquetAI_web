@@ -3,9 +3,17 @@ import { readsApi, type LabelRead } from "../api/reads.js";
 import { isOcrSettled } from "../api/vision.js";
 
 const POLL_INTERVAL_MS = 2500;
-const MIN_WAIT_MS = 15000;
-const MAX_WAIT_MS = 120000;
-const PER_IMAGE_WAIT_MS = 4000;
+/** After a minute without news the OCR is clearly busy with something big: ask less often. */
+const SLOW_POLL_AFTER_MS = 60_000;
+const SLOW_POLL_INTERVAL_MS = 8000;
+/**
+ * How long the watcher keeps going without a single image finishing. The OCR reads one image at a
+ * time and a heavy one can take a minute, so the time a batch needs cannot be guessed from its size:
+ * what matters is whether it is still making progress.
+ */
+const INACTIVITY_LIMIT_MS = 5 * 60_000;
+/** A batch is never followed for longer than this, progress or not. */
+const MAX_WAIT_MS = 60 * 60_000;
 const BATCH_SIZE = 100;
 
 export interface OcrWatcherHandlers {
@@ -47,20 +55,27 @@ export class OcrWatcher {
     if (pending.size === 0) return;
 
     const generation = ++this.generation;
-    const deadline = Date.now() + Math.min(Math.max(MIN_WAIT_MS, pending.size * PER_IMAGE_WAIT_MS), MAX_WAIT_MS);
+    const startedAt = Date.now();
+    let lastProgressAt = startedAt;
 
-    while (Date.now() < deadline && generation === this.generation) {
+    while (generation === this.generation) {
+      const now = Date.now();
+      if (now - lastProgressAt > INACTIVITY_LIMIT_MS || now - startedAt > MAX_WAIT_MS) break;
+
       const token = this.getAccessToken();
       if (!token) return;
 
+      const before = pending.size;
       const ids = Array.from(pending);
       for (let start = 0; start < ids.length; start += BATCH_SIZE) {
         await this.poll(ids.slice(start, start + BATCH_SIZE), token, pending);
         if (generation !== this.generation) return;
       }
       if (pending.size === 0) return;
+      if (pending.size < before) lastProgressAt = Date.now();
 
-      await new Promise<void>((resolve) => window.setTimeout(resolve, POLL_INTERVAL_MS));
+      const quiet = Date.now() - lastProgressAt > SLOW_POLL_AFTER_MS;
+      await new Promise<void>((resolve) => window.setTimeout(resolve, quiet ? SLOW_POLL_INTERVAL_MS : POLL_INTERVAL_MS));
     }
 
     if (generation !== this.generation) return;

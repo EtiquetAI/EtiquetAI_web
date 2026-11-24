@@ -54,6 +54,11 @@ const ISSUE_MESSAGES: Record<string, string> = {
   tracking_from_qr: "El tracking se tomó del QR.",
   postal_code_from_qr: "El código postal se tomó del QR.",
   tracking_repaired: "Se repararon caracteres que el OCR había confundido en el tracking.",
+  engines_disagree_destinatario: "Los dos motores de OCR leyeron un destinatario distinto: conviene revisarlo.",
+  engines_disagree_direccion: "Los dos motores de OCR leyeron una dirección distinta: conviene revisarla.",
+  engines_disagree_codigo_postal: "Los dos motores de OCR leyeron un código postal distinto: conviene revisarlo.",
+  engines_disagree_destino: "Los dos motores de OCR leyeron un destino distinto: conviene revisarlo.",
+  engines_disagree_tracking: "Los dos motores de OCR leyeron un tracking distinto: conviene revisarlo.",
   multiple_labels_detected: "La imagen tiene más de una etiqueta: abajo se listan todas.",
   implausible_destinatario: "El destinatario leído no parece un nombre: conviene revisarlo.",
   implausible_destino: "El destino leído no parece una localidad: conviene revisarlo.",
@@ -76,15 +81,23 @@ export function describeRejection(reason: string): string {
   return BATCH_REJECTION_MESSAGES[reason] ?? reason;
 }
 
+/** The field an issue is about, so a person can be taken to it; null when it concerns the whole reading. */
+export function issueField(code: string): string | null {
+  if (code.startsWith(MISSING_PREFIX)) return code.slice(MISSING_PREFIX.length);
+  if (code.startsWith(LOW_CONFIDENCE_PREFIX)) return code.slice(LOW_CONFIDENCE_PREFIX.length);
+  if (code.startsWith("implausible_")) return code.slice("implausible_".length);
+  if (code.startsWith("engines_disagree_")) return code.slice("engines_disagree_".length);
+  if (code === "postal_code_mismatch" || code === "postal_code_format_invalid") return "codigo_postal";
+  if (code === "tracking_mismatch" || code === "tracking_format_invalid") return "tracking";
+  return null;
+}
+
 /** Fields the OCR itself was unsure about, so the person looks at them first. */
 export function doubtfulFields(issues: string[] | undefined, confidence: Record<string, number> | undefined): Set<string> {
   const doubtful = new Set<string>();
   for (const code of issues ?? []) {
-    if (code.startsWith(MISSING_PREFIX)) doubtful.add(code.slice(MISSING_PREFIX.length));
-    else if (code.startsWith(LOW_CONFIDENCE_PREFIX)) doubtful.add(code.slice(LOW_CONFIDENCE_PREFIX.length));
-    else if (code.startsWith("implausible_")) doubtful.add(code.slice("implausible_".length));
-    else if (code === "postal_code_mismatch" || code === "postal_code_format_invalid") doubtful.add("codigo_postal");
-    else if (code === "tracking_mismatch" || code === "tracking_format_invalid") doubtful.add("tracking");
+    const field = issueField(code);
+    if (field !== null) doubtful.add(field);
   }
   for (const [field, score] of Object.entries(confidence ?? {})) {
     if (score < MEDIUM_CONFIDENCE) doubtful.add(field);

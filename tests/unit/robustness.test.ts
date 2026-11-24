@@ -214,6 +214,7 @@ describe("a table that is being used", () => {
     expect(issueField("low_confidence_destinatario")).toBe("destinatario");
     expect(issueField("implausible_direccion")).toBe("direccion");
     expect(issueField("postal_code_mismatch")).toBe("codigo_postal");
+    expect(issueField("engines_disagree_tracking")).toBe("tracking");
     expect(issueField("multiple_labels_detected")).toBeNull();
   });
 });
@@ -357,4 +358,141 @@ describe("exporting a sheet", () => {
     expect(rows[2].validation_status).toBe("REVIEW");
     expect(rows[2].issues).toEqual(["missing_tracking"]);
   });
+});
+
+describe("paging the results", () => {
+  const all = (count: number) =>
+    Array.from({ length: count }, (_, i) =>
+      readPayload({ id: `r${i + 1}`, image_id: `image-${i + 1}`, destinatario: `PERSONA ${i + 1}`, created_at: new Date(Date.UTC(2026, 10, 1, 0, count - i)).toISOString() }),
+    );
+
+  /** A server holding `count` reads that honours limit and offset and reports the total, as the real one does. */
+  function server(count: number) {
+    const data = all(count);
+    return mockFetch({
+      "GET /api/v1/reads": (call) => {
+        const limit = Number(call.query.get("limit") ?? data.length);
+        const offset = Number(call.query.get("offset") ?? 0);
+        const response = json(data.slice(offset, offset + limit));
+        response.headers.set("X-Total-Count", String(data.length));
+        return response;
+      },
+    });
+  }
+
+  const info = () => document.getElementById("resultsPagerInfo")!.textContent;
+  const label = () => document.getElementById("resultsPageLabel")!.textContent;
+  const numbers = () => [...document.querySelectorAll("#resultsTableBody .col-index")].map((cell) => cell.textContent);
+
+  it("shows the first page and says how many there are in all", async () => {
+    server(45);
+    await new ResultsTable({ getAccessToken: token }).refresh();
+
+    expect(numbers()).toHaveLength(20);
+    expect(info()).toBe("Mostrando 1–20 de 45");
+    expect(label()).toBe("Página 1 de 3");
+    expect((document.getElementById("resultsPrev") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("resultsNext") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("goes to the next page, numbers the rows across pages and stops at the last one", async () => {
+    const { calls } = server(45);
+    const table = new ResultsTable({ getAccessToken: token });
+    await table.refresh();
+
+    (document.getElementById("resultsNext") as HTMLButtonElement).click();
+    await flush();
+    expect(calls.at(-1)!.query.get("offset")).toBe("20");
+    expect(numbers()[0]).toBe("21");
+
+    (document.getElementById("resultsNext") as HTMLButtonElement).click();
+    await flush();
+    expect(numbers()).toHaveLength(5);
+    expect(info()).toBe("Mostrando 41–45 de 45");
+    expect((document.getElementById("resultsNext") as HTMLButtonElement).disabled).toBe(true);
+
+    (document.getElementById("resultsPrev") as HTMLButtonElement).click();
+    await flush();
+    expect(label()).toBe("Página 2 de 3");
+  });
+
+  it("goes back to the first page when the filters or the page size change", async () => {
+    const { calls } = server(45);
+    const table = new ResultsTable({ getAccessToken: token });
+    await table.refresh();
+    (document.getElementById("resultsNext") as HTMLButtonElement).click();
+    await flush();
+
+    const select = document.getElementById("resultsFilterValidation") as HTMLSelectElement;
+    select.value = "OK";
+    select.dispatchEvent(new Event("change"));
+    await flush();
+    expect(calls.at(-1)!.query.get("offset")).toBe("0");
+
+    (document.getElementById("resultsNext") as HTMLButtonElement).click();
+    await flush();
+    const size = document.getElementById("resultsPageSize") as HTMLSelectElement;
+    size.value = "10";
+    size.dispatchEvent(new Event("change"));
+    await flush();
+    expect(calls.at(-1)!.query.get("limit")).toBe("10");
+    expect(calls.at(-1)!.query.get("offset")).toBe("0");
+    expect(label()).toBe("Página 1 de 5");
+  });
+
+  it("treats an API that does not paginate as one page holding everything", async () => {
+    mockFetch({ "GET /api/v1/reads": () => json(all(7)) });
+    await new ResultsTable({ getAccessToken: token }).refresh();
+
+    expect(numbers()).toHaveLength(7);
+    expect(info()).toBe("Mostrando 1–7 de 7");
+    expect((document.getElementById("resultsNext") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("counts a result that arrives while another page is open without disturbing the rows", async () => {
+    server(45);
+    const table = new ResultsTable({ getAccessToken: token });
+    await table.refresh();
+    (document.getElementById("resultsNext") as HTMLButtonElement).click();
+    await flush();
+    const before = document.querySelector("#resultsTableBody tr");
+
+    mockFetch({ "GET /api/v1/reads": () => json([readPayload({ id: "fresh", image_id: "image-fresh" })]) });
+    table.mergeReads([await apiOne()]);
+
+    expect(document.querySelector("#resultsTableBody tr")).toBe(before);
+    expect(info()).toBe("Mostrando 21–40 de 46");
+  });
+
+  it("puts a result that arrives on the first page and pushes the oldest off it", async () => {
+    server(20);
+    const table = new ResultsTable({ getAccessToken: token });
+    await table.refresh();
+
+    mockFetch({ "GET /api/v1/reads": () => json([readPayload({ id: "fresh", image_id: "image-fresh", destinatario: "LLEGO AHORA", created_at: "2026-12-01T00:00:00Z" })]) });
+    table.mergeReads([await apiOne()]);
+
+    expect(numbers()).toHaveLength(20);
+    expect(document.querySelector("#resultsTableBody tr")!.textContent).toContain("LLEGO AHORA");
+    expect(info()).toBe("Mostrando 1–20 de 21");
+  });
+
+  it("exports everything that matches, not just the page on screen", async () => {
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const { calls } = server(250);
+    const table = new ResultsTable({ getAccessToken: token });
+    await table.refresh();
+    const before = calls.length;
+
+    (document.getElementById("exportXlsxButton") as HTMLButtonElement).click();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const asked = calls.slice(before).filter((call) => call.path === "/api/v1/reads");
+    expect(asked.map((call) => call.query.get("offset"))).toEqual(["0", "200"]);
+    expect(document.getElementById("resultsTableStatus")!.textContent).toContain("250 filas");
+  });
+
+  async function apiOne() {
+    return (await readsApi.listReads("t"))[0];
+  }
 });

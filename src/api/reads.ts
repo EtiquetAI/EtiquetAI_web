@@ -200,6 +200,46 @@ export async function listReads(accessToken: string, filter?: ReadFilter): Promi
   return payload.map(parseRead);
 }
 
+export interface ReadPage {
+  reads: LabelRead[];
+  /** How many reads match the filter in all, whatever the page. */
+  total: number;
+}
+
+/**
+ * One page of the results. The total comes in the `X-Total-Count` header; an API that does not send it
+ * (it predates paging) answered with everything, so the page is then all there is.
+ */
+export async function listReadsPage(
+  accessToken: string,
+  filter: ReadFilter | undefined,
+  page: { limit: number; offset: number },
+): Promise<ReadPage> {
+  const params = new URLSearchParams(filterQuery(filter));
+  params.set("limit", String(page.limit));
+  params.set("offset", String(page.offset));
+  const response = await authorizedRequest(`/api/v1/reads?${params.toString()}`, accessToken, { method: "GET" });
+  const payload: unknown = await response.json();
+  if (!Array.isArray(payload)) {
+    throw new Error("La API devolvió una respuesta inválida.");
+  }
+  const reads = payload.map(parseRead);
+  const header = Number(response.headers.get("X-Total-Count"));
+  return { reads, total: Number.isFinite(header) && response.headers.has("X-Total-Count") ? header : page.offset + reads.length };
+}
+
+const EXPORT_PAGE_SIZE = 200;
+
+/** Every read that matches the filter, page after page: what an export must hold, not just the page on screen. */
+export async function listAllReads(accessToken: string, filter?: ReadFilter): Promise<LabelRead[]> {
+  const all: LabelRead[] = [];
+  for (;;) {
+    const { reads, total } = await listReadsPage(accessToken, filter, { limit: EXPORT_PAGE_SIZE, offset: all.length });
+    all.push(...reads);
+    if (reads.length === 0 || all.length >= total) return all;
+  }
+}
+
 export async function listReadsForImages(imageIDs: string[], accessToken: string): Promise<LabelRead[]> {
   if (imageIDs.length === 0 || imageIDs.length > 100) return [];
   const query = new URLSearchParams({ image_ids: imageIDs.join(",") });
@@ -259,6 +299,8 @@ export async function deleteAllReads(accessToken: string): Promise<void> {
 
 export const readsApi = {
   listReads,
+  listReadsPage,
+  listAllReads,
   listReadsForImages,
   createRead,
   updateRead,

@@ -75,6 +75,8 @@ let ocrWatcher: OcrWatcher | null = null;
 let navigation: AppNavigation | null = null;
 let metricsPanel: MetricsPanel | null = null;
 let currentUser: User | null = null;
+/** Whose data the panels currently hold, so a different account starts from a clean slate. */
+let shownUserId: string | null = null;
 let currentView: ApplicationView = AUTH_VIEW_LANDING;
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -301,7 +303,8 @@ async function handleLogout(elements: PageElements): Promise<void> {
     // Local session cleanup must not depend on the logout request succeeding.
   } finally {
     clearSession();
-    clearImageCache();
+    resetAccountState();
+    shownUserId = null;
     appInstance?.stop();
     showLanding(elements);
     elements.loginForm.reset();
@@ -312,12 +315,22 @@ async function handleLogout(elements: PageElements): Promise<void> {
   }
 }
 
+/** Empties every panel that holds data of the account that was signed in. */
+function resetAccountState(): void {
+  ocrWatcher?.cancel();
+  resultsTable?.reset();
+  uploadPanel?.reset();
+  metricsPanel?.reset();
+  clearImageCache();
+}
+
 function showAuthenticatedApp(user: User, elements: PageElements): void {
   if (appInstance === null) {
     const video = document.getElementById("video") as HTMLVideoElement;
     const overlay = document.getElementById("overlay") as HTMLCanvasElement;
     const scanner = new BrowserCameraScanner(video, overlay);
-    const storage = new LocalStorageQRCodeStorage();
+    const storage = new LocalStorageQRCodeStorage(() => currentUser?.id ?? null);
+    storage.purgeLegacy();
 
     ocrWatcher = new OcrWatcher({
       getAccessToken,
@@ -327,7 +340,7 @@ function showAuthenticatedApp(user: User, elements: PageElements): void {
         onError: (message) => resultsTable?.notify(message, "error"),
         onTimeout: (pending) =>
           resultsTable?.notify(
-            `${pending} imagen(es) todavía no tienen datos OCR disponibles. Podés actualizar la tabla más tarde.`,
+            `${pending} imagen(es) siguen esperando al OCR. Cuando quieras, usá "Actualizar estado" en Ingresar imagen o "Actualizar" acá.`,
             "neutral",
           ),
       },
@@ -354,6 +367,7 @@ function showAuthenticatedApp(user: User, elements: PageElements): void {
         void ocrWatcher?.watch(imageIDs);
       },
       onBatches: (batches) => resultsTable?.setBatches(batches),
+      onPendingCount: (count) => resultsTable?.setPendingCount(count),
     });
 
     metricsPanel = new MetricsPanel({ getAccessToken });
@@ -372,6 +386,12 @@ function showAuthenticatedApp(user: User, elements: PageElements): void {
   }
 
   currentUser = user;
+  if (shownUserId !== user.id) {
+    // A different account: nothing from the previous one may stay on screen.
+    resetAccountState();
+    shownUserId = user.id;
+  }
+  void appInstance?.refreshList();
   elements.currentUser.textContent = `${user.name} — ${user.role}`;
   setPageView(elements, AUTH_VIEW_AUTHENTICATED);
   navigation?.show("scan");

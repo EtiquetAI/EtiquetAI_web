@@ -53,6 +53,15 @@ export class MetricsPanel {
     this.period.addEventListener("change", () => void this.refresh());
   }
 
+  /** Forgets the figures of the previous account. */
+  reset(): void {
+    this.body.replaceChildren();
+    this.setStatus("", false);
+    this.period.value = "";
+    this.loading = false;
+    this.refreshButton.disabled = false;
+  }
+
   async refresh(): Promise<void> {
     const token = this.getAccessToken();
     if (token === null || this.loading) return;

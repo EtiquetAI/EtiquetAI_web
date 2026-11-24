@@ -139,7 +139,7 @@ describe("results table", () => {
     await flush();
 
     expect(calls.length).toBeGreaterThan(0);
-    expect(Object.fromEntries(filtered.calls[0].query)).toEqual({ validation_status: "REJECTED" });
+    expect(Object.fromEntries(filtered.calls[0].query)).toEqual({ validation_status: "REJECTED", limit: "20", offset: "0" });
     expect(document.getElementById("resultsTableStatus")?.textContent).toMatch(/Ninguna lectura coincide/);
     expect((document.getElementById("resultsFilterClear") as HTMLElement).hidden).toBe(false);
   });

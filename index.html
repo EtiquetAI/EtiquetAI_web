@@ -400,6 +400,7 @@
             <div id="uploadBatchReport" class="upload-report" aria-live="polite"></div>
             <div class="upload-progress-row">
               <p id="uploadProgress" class="upload-progress" role="status" aria-live="polite" hidden></p>
+              <button id="refreshUploadsButton" class="button button-secondary button-compact" type="button" hidden>Actualizar estado</button>
               <button id="retryFailedButton" class="button button-secondary button-compact" type="button" hidden>Reintentar fallidas</button>
             </div>
             <ul id="uploadedList" class="uploaded-list"></ul>
@@ -439,6 +440,20 @@
               </label>
               <button id="resultsFilterClear" class="text-button" type="button" hidden>Quitar filtros</button>
             </form>
+
+            <p id="resultsPending" class="table-status results-pending" role="status" aria-live="polite" hidden></p>
+
+            <nav id="resultsPager" class="results-pager" aria-label="Paginado de resultados" hidden>
+              <span id="resultsPagerInfo" class="results-pager-info" role="status" aria-live="polite"></span>
+              <label class="filter-field results-pager-size"><span>Por página</span>
+                <select id="resultsPageSize"><option value="10">10</option><option value="20" selected>20</option><option value="50">50</option><option value="100">100</option></select>
+              </label>
+              <span class="results-pager-buttons">
+                <button id="resultsPrev" class="button button-secondary button-compact" type="button">Anterior</button>
+                <span id="resultsPageLabel" class="results-pager-label"></span>
+                <button id="resultsNext" class="button button-secondary button-compact" type="button">Siguiente</button>
+              </span>
+            </nav>
 
             <div class="table-scroll">
               <table class="results-table">
